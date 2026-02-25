@@ -9,6 +9,7 @@ import Clients from './pages/Clients';
 import Invoices from './pages/Invoices';
 import Reports from './pages/Reports';
 import Expenses from './pages/Expenses';
+import Cash from './pages/Cash';
 import Dashboard from './pages/Dashboard';
 import { Routes, Route } from 'react-router-dom';
 
@@ -21,6 +22,7 @@ function App() {
         <Route path="/clients" element={<Clients />} />
         <Route path="/invoices" element={<Invoices />} />
         <Route path="/expenses" element={<Expenses />} />
+        <Route path="/cash" element={<Cash />} />
         <Route path="/reports" element={<Reports />} />
         <Route path="*" element={<Dashboard />} /> {/* Fallback route */}
       </Routes>

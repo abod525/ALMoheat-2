@@ -134,7 +134,7 @@ const Dashboard = () => {
           icon={Package}
           color="text-blue-600"
           bgColor="bg-blue-100"
-          onClick={() => onNavigate('products')}
+          onClick={() => navigate('/products')}
           subtitle="اضغط للإدارة"
         />
         <StatCard
@@ -152,7 +152,7 @@ const Dashboard = () => {
           icon={FileText}
           color="text-purple-600"
           bgColor="bg-purple-100"
-          onClick={() => onNavigate('invoices')}
+          onClick={() => navigate('/invoices')}
           subtitle="اضغط للإدارة"
         />
         <StatCard

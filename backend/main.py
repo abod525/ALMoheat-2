@@ -3,19 +3,33 @@ ALMoheat Accounting System - Backend API v2.0
 FastAPI + MongoDB with Strict Dual-Unit System
 """
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Depends, status
 from dotenv import load_dotenv
 import os
 from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=15)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
 from typing import Optional, List, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 from enum import Enum
 import pandas as pd
 from io import BytesIO
 from fastapi.responses import StreamingResponse
+from decimal import Decimal
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from jose import JWTError, jwt
+from passlib.context import CryptContext
 
 # Initialize FastAPI app
 app = FastAPI(title="ALMoheat Accounting System", version="2.0.0")
@@ -23,10 +37,19 @@ app = FastAPI(title="ALMoheat Accounting System", version="2.0.0")
 # Load environment variables
 load_dotenv()
 
-# CORS Middleware
+# JWT Configuration
+SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-here")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+# Password hashing
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+# CORS Middleware - Restricted origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:3000", "https://your-frontend-domain.com"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -51,16 +74,79 @@ class TransactionType(str, Enum):
     INCOME = "income"
     EXPENSE = "expense"
 
+# ==================== USER MODELS ====================
+
+class UserBase(BaseModel):
+    username: str
+    full_name: Optional[str] = None
+
+class UserCreate(UserBase):
+    password: str
+
+class User(UserBase):
+    id: str = Field(alias="_id")
+    disabled: bool = False
+    
+    model_config = {
+        "populate_by_name": True,
+        "arbitrary_types_allowed": True,
+        "json_encoders": {ObjectId: str}
+    }
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+# ==================== AUTHENTICATION FUNCTIONS ====================
+
+def verify_password(plain_password, hashed_password):
+    return pwd_context.verify(plain_password, hashed_password)
+
+def get_password_hash(password):
+    return pwd_context.hash(password)
+
+async def get_user(username: str):
+    user = await db.users.find_one({"username": username})
+    if user:
+        return User(**user)
+    return None
+
+async def authenticate_user(username: str, password: str):
+    user = await get_user(username)
+    if not user:
+        return False
+    if not verify_password(password, user.password_hash):
+        return False
+    return user
+
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="بيانات الاعتماد غير صالحة",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+    user = await get_user(username)
+    if user is None:
+        raise credentials_exception
+    return user
+
 # ==================== PRODUCT MODELS ====================
 
 class ProductBase(BaseModel):
     name: str
-    cost: float = Field(ge=0)
-    price: float = Field(ge=0)
+    cost: Decimal = Field(ge=0)
+    price: Decimal = Field(ge=0)
     unit_type: UnitType = UnitType.SIMPLE
-    weight_per_unit: Optional[float] = Field(default=None, ge=0)
-    stock_count: float = Field(default=0, ge=0)
-    stock_weight: float = Field(default=0, ge=0)
+    weight_per_unit: Optional[Decimal] = Field(default=None, ge=0)
+    stock_count: Decimal = Field(default=Decimal("0"), ge=0)
+    stock_weight: Decimal = Field(default=Decimal("0"), ge=0)
     
     @model_validator(mode='after')
     def validate_dual_unit(self):
@@ -80,12 +166,12 @@ class ProductCreate(ProductBase):
 
 class ProductUpdate(BaseModel):
     name: Optional[str] = None
-    cost: Optional[float] = Field(default=None, ge=0)
-    price: Optional[float] = Field(default=None, ge=0)
+    cost: Optional[Decimal] = Field(default=None, ge=0)
+    price: Optional[Decimal] = Field(default=None, ge=0)
     unit_type: Optional[UnitType] = None
-    weight_per_unit: Optional[float] = Field(default=None, ge=0)
-    stock_count: Optional[float] = Field(default=None, ge=0)
-    stock_weight: Optional[float] = Field(default=None, ge=0)
+    weight_per_unit: Optional[Decimal] = Field(default=None, ge=0)
+    stock_count: Optional[Decimal] = Field(default=None, ge=0)
+    stock_weight: Optional[Decimal] = Field(default=None, ge=0)
 
 class Product(ProductBase):
     id: str = Field(alias="_id")
@@ -103,11 +189,12 @@ class Product(ProductBase):
 class InvoiceItem(BaseModel):
     product_id: str
     product_name: str
-    quantity: float = Field(gt=0)
-    unit_price: float = Field(ge=0)
-    total: float
+    quantity: Decimal = Field(gt=0)
+    unit_price: Decimal = Field(ge=0)
+    total: Decimal
     sale_unit: SaleUnit = SaleUnit.COUNT
-    weight_per_unit: Optional[float] = None
+    weight_per_unit: Optional[Decimal] = None
+    weight_per_unit_snapshot: Optional[Decimal] = None
 
 class InvoiceItemDisplay(InvoiceItem):
     """Extended invoice item for display in reports"""
@@ -121,9 +208,9 @@ class InvoiceBase(BaseModel):
     invoice_number: str
     date: datetime
     items: List[InvoiceItem]
-    subtotal: float
-    discount: float = Field(default=0, ge=0)
-    total: float
+    subtotal: Decimal
+    discount: Decimal = Field(default=Decimal("0"), ge=0)
+    total: Decimal
     notes: Optional[str] = None
 
 class InvoiceCreate(InvoiceBase):
@@ -144,7 +231,7 @@ class Invoice(InvoiceBase):
 class ClientBase(BaseModel):
     name: str
     phone: Optional[str] = None
-    balance: float = Field(default=0)
+    balance: Decimal = Field(default=Decimal("0"))
 
 class ClientCreate(ClientBase):
     pass
@@ -152,7 +239,7 @@ class ClientCreate(ClientBase):
 class ClientUpdate(BaseModel):
     name: Optional[str] = None
     phone: Optional[str] = None
-    balance: Optional[float] = None
+    balance: Optional[Decimal] = None
 
 class Client(ClientBase):
     id: str = Field(alias="_id")
@@ -165,18 +252,18 @@ class Client(ClientBase):
         "json_encoders": {ObjectId: str}
     }
 
-# ==================== EXPENSE/CASH MODELS ====================
+# ==================== CASH TRANSACTION MODELS ====================
 
-class ExpenseBase(BaseModel):
+class CashTransactionBase(BaseModel):
     date: datetime
     type: TransactionType
-    amount: float = Field(gt=0)
+    amount: Decimal = Field(gt=0)
     note: Optional[str] = None
 
-class ExpenseCreate(ExpenseBase):
+class CashTransactionCreate(CashTransactionBase):
     pass
 
-class Expense(ExpenseBase):
+class CashTransaction(CashTransactionBase):
     id: str = Field(alias="_id")
     created_at: datetime
     
@@ -193,11 +280,50 @@ def serialize_doc(doc):
     if doc is None:
         return None
     doc["_id"] = str(doc["_id"])
+    # Convert Decimal to string for JSON serialization
+    for key, value in doc.items():
+        if isinstance(value, Decimal):
+            doc[key] = str(value)
     return doc
 
 def serialize_docs(docs):
     """Convert multiple MongoDB documents"""
     return [serialize_doc(doc) for doc in docs]
+
+# ==================== AUTHENTICATION ENDPOINTS ====================
+
+@app.post("/token", response_model=Token)
+async def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    """Login endpoint to get access token"""
+    user = await authenticate_user(form_data.username, form_data.password)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="اسم المستخدم أو كلمة المرور غير صحيحة",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.username}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@app.post("/api/register", response_model=User)
+async def register(user: UserCreate):
+    """Register a new user"""
+    existing = await db.users.find_one({"username": user.username})
+    if existing:
+        raise HTTPException(status_code=400, detail="اسم المستخدم موجود بالفعل")
+    
+    user_data = {
+        "username": user.username,
+        "full_name": user.full_name,
+        "password_hash": get_password_hash(user.password),
+        "disabled": False
+    }
+    result = await db.users.insert_one(user_data)
+    created = await db.users.find_one({"_id": result.inserted_id})
+    return serialize_doc(created)
 
 # ==================== PRODUCT ENDPOINTS ====================
 
@@ -314,158 +440,167 @@ async def get_invoice(invoice_id: str):
 
 @app.post("/api/invoices", response_model=Invoice)
 async def create_invoice(invoice: InvoiceCreate):
-    """Create a new invoice with STRICT dual unit stock validation"""
-    
-    # Validate and update stock for each item
-    for item in invoice.items:
-        product = await db.products.find_one({"_id": ObjectId(item.product_id)})
-        if not product:
-            raise HTTPException(status_code=404, detail=f"المنتج غير موجود: {item.product_id}")
-        
-        # Set product name and weight_per_unit snapshot
-        item.product_name = product["name"]
-        item.weight_per_unit = product.get("weight_per_unit")
-        
-        if product.get("unit_type") == UnitType.DUAL:
-            weight_per_unit = product.get("weight_per_unit", 1)
+    """Create a new invoice with STRICT dual unit stock validation using transactions"""
+    async with await client.start_session() as session:
+        async with session.start_transaction():
+            # Validate and update stock for each item
+            for item in invoice.items:
+                product = await db.products.find_one({"_id": ObjectId(item.product_id)}, session=session)
+                if not product:
+                    raise HTTPException(status_code=404, detail=f"المنتج غير موجود: {item.product_id}")
+                
+                # Set product name and weight_per_unit snapshot
+                item.product_name = product["name"]
+                item.weight_per_unit_snapshot = product.get("weight_per_unit")
+                
+                if product.get("unit_type") == UnitType.DUAL:
+                    weight_per_unit = product.get("weight_per_unit", Decimal("1"))
+                    
+                    if item.sale_unit == SaleUnit.COUNT:
+                        # Selling by count: validate stock_count
+                        if product.get("stock_count", Decimal("0")) < item.quantity:
+                            available = product.get("stock_count", Decimal("0"))
+                            raise HTTPException(
+                                status_code=400, 
+                                detail=f"الكمية المطلوبة ({item.quantity}) تتجاوز المخزون المتاح ({available}) للمنتج {item.product_name}"
+                            )
+                        # Deduct from stock_count and stock_weight
+                        deduct_count = item.quantity
+                        deduct_weight = item.quantity * weight_per_unit
+                        
+                        # Additional validation for weight
+                        if product.get("stock_weight", Decimal("0")) < deduct_weight:
+                            available_weight = product.get("stock_weight", Decimal("0"))
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"الوزن غير متوفر! المتاح: {available_weight} كغ"
+                            )
+                        
+                        new_stock_count = product.get("stock_count", Decimal("0")) - deduct_count
+                        new_stock_weight = product.get("stock_weight", Decimal("0")) - deduct_weight
+                        
+                    else:  # SaleUnit.WEIGHT
+                        # Selling by weight: validate stock_weight
+                        if product.get("stock_weight", Decimal("0")) < item.quantity:
+                            available_weight = product.get("stock_weight", Decimal("0"))
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"الوزن غير متوفر! المتاح: {available_weight} كغ"
+                            )
+                        
+                        # Deduct from stock_weight and recalculate stock_count
+                        deduct_weight = item.quantity
+                        deduct_count = item.quantity / weight_per_unit
+                        
+                        new_stock_weight = product.get("stock_weight", Decimal("0")) - deduct_weight
+                        new_stock_count = new_stock_weight / weight_per_unit
+                    
+                    # Apply stock update with session
+                    await db.products.update_one(
+                        {"_id": ObjectId(item.product_id)},
+                        {
+                            "$set": {
+                                "stock_count": new_stock_count,
+                                "stock_weight": new_stock_weight,
+                                "updated_at": datetime.now()
+                            }
+                        },
+                        session=session
+                    )
+                    
+                else:
+                    # Simple unit product - validate stock_count
+                    if product.get("stock_count", Decimal("0")) < item.quantity:
+                        available = product.get("stock_count", Decimal("0"))
+                        raise HTTPException(
+                            status_code=400, 
+                            detail=f"الكمية المطلوبة ({item.quantity}) تتجاوز المخزون المتاح ({available}) للمنتج {item.product_name}"
+                        )
+                    new_stock_count = product.get("stock_count", Decimal("0")) - item.quantity
+                    await db.products.update_one(
+                        {"_id": ObjectId(item.product_id)},
+                        {
+                            "$set": {
+                                "stock_count": new_stock_count,
+                                "updated_at": datetime.now()
+                            }
+                        },
+                        session=session
+                    )
             
-            if item.sale_unit == SaleUnit.COUNT:
-                # Selling by count: validate stock_count
-                if product.get("stock_count", 0) < item.quantity:
-                    available = product.get("stock_count", 0)
-                    raise HTTPException(
-                        status_code=400, 
-                        detail=f"الكمية المطلوبة ({item.quantity}) تتجاوز المخزون المتاح ({available}) للمنتج {item.product_name}"
-                    )
-                # Deduct from stock_count and stock_weight
-                deduct_count = item.quantity
-                deduct_weight = item.quantity * weight_per_unit
-                
-                # Additional validation for weight
-                if product.get("stock_weight", 0) < deduct_weight:
-                    available_weight = product.get("stock_weight", 0)
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"الوزن غير متوفر! المتاح: {available_weight} كغ"
-                    )
-                
-                new_stock_count = product.get("stock_count", 0) - deduct_count
-                new_stock_weight = product.get("stock_weight", 0) - deduct_weight
-                
-            else:  # SaleUnit.WEIGHT
-                # Selling by weight: validate stock_weight
-                if product.get("stock_weight", 0) < item.quantity:
-                    available_weight = product.get("stock_weight", 0)
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"الوزن غير متوفر! المتاح: {available_weight} كغ"
-                    )
-                
-                # Deduct from stock_weight and recalculate stock_count
-                deduct_weight = item.quantity
-                deduct_count = item.quantity / weight_per_unit
-                
-                new_stock_weight = product.get("stock_weight", 0) - deduct_weight
-                new_stock_count = new_stock_weight / weight_per_unit
+            # Create invoice with session
+            invoice_data = {
+                **invoice.model_dump(),
+                "created_at": datetime.now()
+            }
             
-            # Apply stock update
-            await db.products.update_one(
-                {"_id": ObjectId(item.product_id)},
+            result = await db.invoices.insert_one(invoice_data, session=session)
+            created = await db.invoices.find_one({"_id": result.inserted_id}, session=session)
+            
+            # Update customer balance and last transaction date with session
+            await db.clients.update_one(
+                {"_id": ObjectId(invoice.customer_id)},
                 {
-                    "$set": {
-                        "stock_count": new_stock_count,
-                        "stock_weight": new_stock_weight,
-                        "updated_at": datetime.now()
-                    }
-                }
+                    "$inc": {"balance": invoice.total},
+                    "$set": {"last_transaction_date": datetime.now()}
+                },
+                session=session
             )
             
-        else:
-            # Simple unit product - validate stock_count
-            if product.get("stock_count", 0) < item.quantity:
-                available = product.get("stock_count", 0)
-                raise HTTPException(
-                    status_code=400, 
-                    detail=f"الكمية المطلوبة ({item.quantity}) تتجاوز المخزون المتاح ({available}) للمنتج {item.product_name}"
-                )
-            new_stock_count = product.get("stock_count", 0) - item.quantity
-            await db.products.update_one(
-                {"_id": ObjectId(item.product_id)},
-                {
-                    "$set": {
-                        "stock_count": new_stock_count,
-                        "updated_at": datetime.now()
-                    }
-                }
-            )
-    
-    # Create invoice
-    invoice_data = {
-        **invoice.model_dump(),
-        "created_at": datetime.now()
-    }
-    
-    result = await db.invoices.insert_one(invoice_data)
-    created = await db.invoices.find_one({"_id": result.inserted_id})
-    
-    # Update customer balance and last transaction date
-    await db.clients.update_one(
-        {"_id": ObjectId(invoice.customer_id)},
-        {
-            "$inc": {"balance": invoice.total},
-            "$set": {"last_transaction_date": datetime.now()}
-        }
-    )
-    
-    return serialize_doc(created)
+            return serialize_doc(created)
 
 @app.delete("/api/invoices/{invoice_id}")
 async def delete_invoice(invoice_id: str):
-    """Delete an invoice and restore stock"""
-    invoice = await db.invoices.find_one({"_id": ObjectId(invoice_id)})
-    if not invoice:
-        raise HTTPException(status_code=404, detail="الفاتورة غير موجودة")
-    
-    # Restore stock for each item
-    for item in invoice.get("items", []):
-        product = await db.products.find_one({"_id": ObjectId(item["product_id"])})
-        if product and product.get("unit_type") == UnitType.DUAL:
-            weight_per_unit = item.get("weight_per_unit", product.get("weight_per_unit", 1))
+    """Delete an invoice and restore stock atomically"""
+    async with await client.start_session() as session:
+        async with session.start_transaction():
+            invoice = await db.invoices.find_one({"_id": ObjectId(invoice_id)}, session=session)
+            if not invoice:
+                raise HTTPException(status_code=404, detail="الفاتورة غير موجودة")
             
-            if item.get("sale_unit") == SaleUnit.COUNT:
-                restore_count = item["quantity"]
-                restore_weight = item["quantity"] * weight_per_unit
-            else:
-                restore_weight = item["quantity"]
-                restore_count = item["quantity"] / weight_per_unit
+            # Restore stock for each item
+            for item in invoice.get("items", []):
+                product = await db.products.find_one({"_id": ObjectId(item["product_id"])}, session=session)
+                if product and product.get("unit_type") == UnitType.DUAL:
+                    weight_per_unit = item.get("weight_per_unit_snapshot", product.get("weight_per_unit", Decimal("1")))
+                    
+                    if item.get("sale_unit") == SaleUnit.COUNT:
+                        restore_count = item["quantity"]
+                        restore_weight = item["quantity"] * weight_per_unit
+                    else:
+                        restore_weight = item["quantity"]
+                        restore_count = item["quantity"] / weight_per_unit
+                    
+                    await db.products.update_one(
+                        {"_id": ObjectId(item["product_id"])},
+                        {
+                            "$inc": {
+                                "stock_count": restore_count,
+                                "stock_weight": restore_weight
+                            },
+                            "$set": {"updated_at": datetime.now()}
+                        },
+                        session=session
+                    )
+                else:
+                    await db.products.update_one(
+                        {"_id": ObjectId(item["product_id"])},
+                        {
+                            "$inc": {"stock_count": item["quantity"]},
+                            "$set": {"updated_at": datetime.now()}
+                        },
+                        session=session
+                    )
             
-            await db.products.update_one(
-                {"_id": ObjectId(item["product_id"])},
-                {
-                    "$inc": {
-                        "stock_count": restore_count,
-                        "stock_weight": restore_weight
-                    },
-                    "$set": {"updated_at": datetime.now()}
-                }
+            # Restore customer balance
+            await db.clients.update_one(
+                {"_id": ObjectId(invoice["customer_id"])},
+                {"$inc": {"balance": -invoice["total"]}},
+                session=session
             )
-        else:
-            await db.products.update_one(
-                {"_id": ObjectId(item["product_id"])},
-                {
-                    "$inc": {"stock_count": item["quantity"]},
-                    "$set": {"updated_at": datetime.now()}
-                }
-            )
-    
-    # Restore customer balance
-    await db.clients.update_one(
-        {"_id": ObjectId(invoice["customer_id"])},
-        {"$inc": {"balance": -invoice["total"]}}
-    )
-    
-    await db.invoices.delete_one({"_id": ObjectId(invoice_id)})
-    return {"message": "تم حذف الفاتورة بنجاح"}
+            
+            await db.invoices.delete_one({"_id": ObjectId(invoice_id)}, session=session)
+            return {"message": "تم حذف الفاتورة بنجاح"}
 
 # ==================== CLIENT ENDPOINTS ====================
 
@@ -519,36 +654,39 @@ async def delete_client(client_id: str):
         raise HTTPException(status_code=404, detail="العميل غير موجود")
     return {"message": "تم حذف العميل بنجاح"}
 
-# ==================== EXPENSE ENDPOINTS ====================
+# ==================== CASH TRANSACTION ENDPOINTS ====================
 
-@app.get("/api/expenses", response_model=List[Expense])
-async def get_expenses(
+@app.get("/api/cash", response_model=List[CashTransaction])
+async def get_cash_transactions(
     start_date: Optional[datetime] = None,
-    end_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None,
+    type: Optional[TransactionType] = None
 ):
-    """Get all expenses with optional date filtering"""
+    """Get all cash transactions (income/expense) with optional date filtering"""
     query = {}
     if start_date and end_date:
         query["date"] = {"$gte": start_date, "$lte": end_date}
+    if type:
+        query["type"] = type
     
-    expenses = await db.expenses.find(query).sort("date", -1).to_list(length=None)
-    return serialize_docs(expenses)
+    cash_transactions = await db.cash_transactions.find(query).sort("date", -1).to_list(length=None)
+    return serialize_docs(cash_transactions)
 
-@app.post("/api/expenses", response_model=Expense)
-async def create_expense(expense: ExpenseCreate):
-    """Create a new expense/cash transaction"""
-    expense_data = {
-        **expense.model_dump(),
+@app.post("/api/cash", response_model=CashTransaction)
+async def create_cash_transaction(transaction: CashTransactionCreate):
+    """Create a new cash transaction (income or expense)"""
+    transaction_data = {
+        **transaction.model_dump(),
         "created_at": datetime.now()
     }
-    result = await db.expenses.insert_one(expense_data)
-    created = await db.expenses.find_one({"_id": result.inserted_id})
+    result = await db.cash_transactions.insert_one(transaction_data)
+    created = await db.cash_transactions.find_one({"_id": result.inserted_id})
     return serialize_doc(created)
 
-@app.delete("/api/expenses/{expense_id}")
-async def delete_expense(expense_id: str):
-    """Delete an expense"""
-    result = await db.expenses.delete_one({"_id": ObjectId(expense_id)})
+@app.delete("/api/cash/{transaction_id}")
+async def delete_cash_transaction(transaction_id: str):
+    """Delete a cash transaction"""
+    result = await db.cash_transactions.delete_one({"_id": ObjectId(transaction_id)})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="المعاملة غير موجودة")
     return {"message": "تم حذف المعاملة بنجاح"}
@@ -623,14 +761,14 @@ async def get_financial_report(
         "date": {"$gte": start_date, "$lte": end_date}
     }).to_list(length=None)
     
-    # Get expenses in range
-    expenses = await db.expenses.find({
+    # Get cash transactions in range
+    cash_transactions = await db.cash_transactions.find({
         "date": {"$gte": start_date, "$lte": end_date}
     }).to_list(length=None)
     
     total_sales = sum(inv.get("total", 0) for inv in invoices)
-    total_expenses = sum(exp.get("amount", 0) for exp in expenses if exp.get("type") == TransactionType.EXPENSE)
-    total_income = sum(exp.get("amount", 0) for exp in expenses if exp.get("type") == TransactionType.INCOME)
+    total_expenses = sum(t.get("amount", 0) for t in cash_transactions if t.get("type") == TransactionType.EXPENSE)
+    total_income = sum(t.get("amount", 0) for t in cash_transactions if t.get("type") == TransactionType.INCOME)
     
     return {
         "total_sales": total_sales,
@@ -638,7 +776,7 @@ async def get_financial_report(
         "total_income": total_income,
         "net_profit": total_sales - total_expenses + total_income,
         "invoices_count": len(invoices),
-        "expenses_count": len(expenses)
+        "transactions_count": len(cash_transactions)
     }
 
 # ==================== BACKUP ENDPOINT ====================
@@ -753,26 +891,26 @@ async def backup_excel():
             adjusted_width = min(max_length + 2, 50)
             worksheet.column_dimensions[column_letter].width = adjusted_width
     
-    # ==================== Sheet 4: Expenses/Cash ====================
-    expenses = await db.expenses.find().to_list(length=None)
-    if expenses:
-        expenses_data = []
-        for e in expenses:
-            exp_date = e.get("date")
-            if isinstance(exp_date, datetime):
-                date_str = exp_date.strftime("%Y-%m-%d")
+    # ==================== Sheet 4: Cash Transactions ====================
+    cash_transactions = await db.cash_transactions.find().to_list(length=None)
+    if cash_transactions:
+        transactions_data = []
+        for t in cash_transactions:
+            trans_date = t.get("date")
+            if isinstance(trans_date, datetime):
+                date_str = trans_date.strftime("%Y-%m-%d")
             else:
-                date_str = str(exp_date)
+                date_str = str(trans_date)
             
-            expenses_data.append({
+            transactions_data.append({
                 "التاريخ": date_str,
-                "النوع": "إيراد" if e.get("type") == TransactionType.INCOME else "مصروف",
-                "المبلغ": e.get("amount", 0),
-                "ملاحظات": e.get("note", "")
+                "النوع": "إيراد" if t.get("type") == TransactionType.INCOME else "مصروف",
+                "المبلغ": t.get("amount", 0),
+                "ملاحظات": t.get("note", "")
             })
         
-        df_expenses = pd.DataFrame(expenses_data)
-        df_expenses.to_excel(writer, sheet_name='المصروفات والنقدية', index=False)
+        df_transactions = pd.DataFrame(transactions_data)
+        df_transactions.to_excel(writer, sheet_name='المصروفات والنقدية', index=False)
         
         worksheet = writer.sheets['المصروفات والنقدية']
         for column in worksheet.columns:

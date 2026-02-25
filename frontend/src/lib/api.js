@@ -36,11 +36,11 @@ export const getInvoice = (id) => api.get(`/invoices/${id}`);
 export const createInvoice = (data) => api.post('/invoices', data);
 export const deleteInvoice = (id) => api.delete(`/invoices/${id}`);
 
-// ==================== EXPENSES ====================
+// ==================== CASH TRANSACTIONS ====================
 
-export const getExpenses = (params) => api.get('/expenses', { params });
-export const createExpense = (data) => api.post('/expenses', data);
-export const deleteExpense = (id) => api.delete(`/expenses/${id}`);
+export const getExpenses = (params) => api.get('/cash', { params: { ...params, type: 'expense' } });
+export const createExpense = (data) => api.post('/cash', data);
+export const deleteExpense = (id) => api.delete(`/cash/${id}`);
 
 // ==================== REPORTS ====================
 
@@ -72,8 +72,8 @@ export const clientsAPI = {
 };
 
 export const cashAPI = {
-  getAll: (type) => api.get('/cash', { params: { transaction_type: type } }),
-  getBalance: () => api.get('/cash/balance'),
+  getAll: (params) => api.get('/cash', { params }), // params can include type
+  // getBalance: () => api.get('/cash/balance'), // TODO: implement in backend
   create: (data) => api.post('/cash', data),
   update: (id, data) => api.put(`/cash/${id}`, data),
   delete: (id) => api.delete(`/cash/${id}`),

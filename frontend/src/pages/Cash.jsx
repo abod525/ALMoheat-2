@@ -48,7 +48,7 @@ import { formatCurrency, formatDateTime } from "../lib/utils";
 import { toast } from "sonner";
 
 const initialFormData = {
-  transaction_type: "receipt",
+  transaction_type: "income", // or "expense" as default
   amount: "",
   description: "",
   contact_id: "",
@@ -81,8 +81,8 @@ export default function Cash() {
 
   const fetchTransactions = async () => {
     try {
-      const type = activeTab === "all" ? null : activeTab;
-      const response = await cashAPI.getAll(type);
+      const type = activeTab === "all" ? null : (activeTab === "receipts" ? "income" : "expense");
+      const response = await cashAPI.getAll(type ? { type } : {});
       setTransactions(response.data);
     } catch (error) {
       toast.error("فشل في تحميل المعاملات");
@@ -115,7 +115,7 @@ export default function Cash() {
 
     try {
       const data = {
-        transaction_type: formData.transaction_type,
+        transaction_type: formData.transaction_type === "receipt" ? "income" : "expense",
         amount: parseFloat(formData.amount),
         description: formData.description,
         contact_id: formData.contact_id && formData.contact_id !== "none" ? formData.contact_id : null,
@@ -128,7 +128,7 @@ export default function Cash() {
       } else {
         // 🆕 إنشاء معاملة جديدة
         await cashAPI.create(data);
-        toast.success(data.transaction_type === "receipt" ? "تم تسجيل سند القبض بنجاح" : "تم تسجيل سند الدفع بنجاح");
+        toast.success(data.transaction_type === "income" ? "تم تسجيل سند القبض بنجاح" : "تم تسجيل سند الدفع بنجاح");
       }
 
       setDialogOpen(false);
@@ -147,7 +147,7 @@ export default function Cash() {
   const handleEdit = (transaction) => {
     setEditingTransaction(transaction);
     setFormData({
-      transaction_type: transaction.transaction_type,
+      transaction_type: transaction.transaction_type === "income" ? "receipt" : "payment",
       amount: transaction.amount.toString(),
       description: transaction.description,
       contact_id: transaction.contact_id || "none",
