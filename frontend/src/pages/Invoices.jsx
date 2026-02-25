@@ -1,43 +1,15 @@
-import { useState, useEffect, useRef } from "react";
-import {
-  FileText,
-  Plus,
-  Search,
-  Eye,
-  TrendingUp,
-  TrendingDown,
-  Trash2,
-  Edit,
-  UserPlus,
-  Filter,
-  PackagePlus,
-  ChevronDown,
-  Check,
-  ShoppingBag,
-  ShoppingCart,
-  Hash,
-  AlertCircle
-} from "lucide-react";
-import { Card, CardContent } from "../components/ui/card";
-import { Button } from "../components/ui/button";
-import { Input } from "../components/ui/input";
-import { Label } from "../components/ui/label";
-import { Badge } from "../components/ui/badge";
-import { Tabs, TabsList, TabsTrigger } from "../components/ui/tabs";
+/**
+ * Invoices Page - ALMoheat Accounting System
+ * Features: Strict Dual Unit Invoicing with Count/Weight Toggle
+ */
+
+import React, { useState, useEffect } from 'react';
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogFooter,
-} from "../components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "../components/ui/select";
+} from "@/components/ui/dialog";
 import {
   Table,
   TableBody,
@@ -45,910 +17,753 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "../components/ui/table";
-import { invoicesAPI, contactsAPI, productsAPI } from "../lib/api";
-import { formatCurrency } from "../lib/utils";
-import { toast } from "sonner";
+} from "@/components/ui/table";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  ToggleGroup,
+  ToggleGroupItem,
+} from "@/components/ui/toggle-group";
+import { 
+  Plus, 
+  Trash2, 
+  FileText, 
+  Hash, 
+  Weight, 
+  ShoppingCart,
+  AlertCircle,
+  User,
+  Calendar,
+  Package
+} from 'lucide-react';
+import { getInvoices, createInvoice, deleteInvoice, getProducts, getClients } from '../lib/api';
+import { toast } from 'sonner';
 
-// 🕒 دالة تنسيق التاريخ
-const formatDateTime = (dateString) => {
-  if (!dateString) return "";
-  return new Date(dateString).toLocaleString("ar-SY", {
-    year: "numeric",
-    month: "numeric",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: true
+const Invoices = () => {
+  const [invoices, setInvoices] = useState([]);
+  const [products, setProducts] = useState([]);
+  const [clients, setClients] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  
+  // Invoice form state
+  const [invoiceData, setInvoiceData] = useState({
+    customer_id: '',
+    customer_name: '',
+    invoice_number: '',
+    date: new Date().toISOString().split('T')[0],
+    items: [],
+    discount: 0,
+    notes: '',
   });
-};
 
-// ✨ مكون قائمة بحث مخصص
-const SearchableSelect = ({ options, value, onChange, placeholder, disabled, labelKey = "name" }) => {
-  const [isOpen, setIsOpen] = useState(false);
-  const [searchTerm, setSearchTerm] = useState("");
-  const wrapperRef = useRef(null);
+  // Current item being added
+  const [currentItem, setCurrentItem] = useState({
+    product_id: '',
+    product_name: '',
+    quantity: '',
+    weight: '',
+    unit_price: '',
+    sale_unit: 'count',
+    weight_per_unit: null,
+  });
 
+  // Fetch data on mount
   useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (wrapperRef.current && !wrapperRef.current.contains(event.target)) {
-        setIsOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    fetchData();
   }, []);
 
-  const filteredOptions = options.filter(option =>
-    option[labelKey].toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  const selectedOption = options.find(o => o.id === value);
-
-  return (
-    <div className="relative" ref={wrapperRef}>
-      <div
-        onClick={() => !disabled && setIsOpen(!isOpen)}
-        className={`flex items-center justify-between h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm cursor-pointer ${disabled ? "opacity-50 cursor-not-allowed" : "hover:bg-white transition-colors hover:border-indigo-300"}`}
-      >
-        <span className={selectedOption ? "text-slate-900 font-medium" : "text-slate-500"}>
-          {selectedOption ? selectedOption[labelKey] : placeholder}
-        </span>
-        <ChevronDown className="h-4 w-4 opacity-50" />
-      </div>
-
-      {isOpen && (
-        <div className="absolute z-50 mt-1 max-h-60 w-full overflow-hidden rounded-xl border border-slate-200 bg-white text-slate-950 shadow-xl animate-in fade-in-0 zoom-in-95">
-          <div className="flex items-center border-b border-slate-100 px-3">
-            <Search className="mr-2 h-4 w-4 shrink-0 opacity-50" />
-            <input
-              className="flex h-10 w-full rounded-md bg-transparent py-3 text-sm outline-none placeholder:text-slate-500"
-              placeholder="اكتب للبحث..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              autoFocus
-            />
-          </div>
-          <div className="max-h-[200px] overflow-y-auto p-1">
-            {filteredOptions.length === 0 ? (
-              <div className="py-6 text-center text-sm text-slate-500">لا توجد نتائج.</div>
-            ) : (
-              filteredOptions.map((option) => (
-                <div
-                  key={option.id}
-                  onClick={() => {
-                    onChange(option.id);
-                    setIsOpen(false);
-                    setSearchTerm("");
-                  }}
-                  className={`relative flex cursor-pointer select-none items-center rounded-lg px-2 py-2.5 text-sm hover:bg-slate-100 transition-colors ${value === option.id ? "bg-slate-50 text-slate-900 font-medium" : "text-slate-700"}`}
-                >
-                  <span className="flex-1 truncate">{option[labelKey]}</span>
-                  {value === option.id && <Check className="ml-2 h-4 w-4 text-indigo-600" />}
-                  {option.quantity !== undefined && (
-                    <span className="text-xs text-slate-400 mr-2 bg-slate-50 px-1.5 py-0.5 rounded">
-                      {parseFloat(option.quantity).toFixed(2)} متوفر
-                    </span>
-                  )}
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
-export default function Invoices() {
-  const [invoices, setInvoices] = useState([]);
-  const [contacts, setContacts] = useState([]);
-  const [products, setProducts] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [activeTab, setActiveTab] = useState("all");
-  const [statusFilter, setStatusFilter] = useState("all");
-
-  // Dialog States
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [viewDialogOpen, setViewDialogOpen] = useState(false);
-  const [editDialogOpen, setEditDialogOpen] = useState(false);
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [productDialogOpen, setProductDialogOpen] = useState(false);
-
-  // Selected Items
-  const [selectedInvoice, setSelectedInvoice] = useState(null);
-  const [invoiceToDelete, setInvoiceToDelete] = useState(null);
-
-  const [submitting, setSubmitting] = useState(false);
-
-  // New Product State
-  const [newProduct, setNewProduct] = useState({
-    name: "",
-    purchase_price: "",
-    sale_price: "",
-    quantity: "",
-    min_quantity: 5,
-    description: ""
-  });
-
-  // Create Invoice State
-  const [invoiceType, setInvoiceType] = useState("sale");
-  const [createStatus, setCreateStatus] = useState("pending");
-  const [selectedContact, setSelectedContact] = useState("");
-  const [newContactName, setNewContactName] = useState("");
-  const [useNewContact, setUseNewContact] = useState(false);
-  const [invoiceItems, setInvoiceItems] = useState([]);
-  const [notes, setNotes] = useState("");
-
-  // Edit Invoice State
-  const [editItems, setEditItems] = useState([]);
-  const [editNotes, setEditNotes] = useState("");
-  const [editStatus, setEditStatus] = useState("");
-  const [editContactId, setEditContactId] = useState("");
-
-  useEffect(() => {
-    fetchInvoices();
-    fetchContacts();
-    fetchProducts();
-  }, [activeTab]);
-
-  const fetchInvoices = async () => {
+  const fetchData = async () => {
     try {
-      const type = activeTab === "all" ? null : activeTab;
-      const response = await invoicesAPI.getAll(type);
-      setInvoices(response.data);
+      setLoading(true);
+      const [invoicesRes, productsRes, clientsRes] = await Promise.all([
+        getInvoices(),
+        getProducts(),
+        getClients(),
+      ]);
+      setInvoices(invoicesRes.data);
+      setProducts(productsRes.data);
+      setClients(clientsRes.data);
     } catch (error) {
-      toast.error("فشل في تحميل الفواتير");
+      toast.error('فشل في تحميل البيانات');
+      console.error(error);
     } finally {
       setLoading(false);
     }
   };
 
-  const fetchContacts = async () => {
-    try {
-      const response = await contactsAPI.getAll();
-      setContacts(response.data);
-    } catch (error) { console.error(error); }
+  const resetForm = () => {
+    setInvoiceData({
+      customer_id: '',
+      customer_name: '',
+      invoice_number: `INV-${Date.now().toString().slice(-6)}`,
+      date: new Date().toISOString().split('T')[0],
+      items: [],
+      discount: 0,
+      notes: '',
+    });
+    setCurrentItem({
+      product_id: '',
+      product_name: '',
+      quantity: '',
+      weight: '',
+      unit_price: '',
+      sale_unit: 'count',
+      weight_per_unit: null,
+    });
   };
 
-  const fetchProducts = async () => {
-    try {
-      const response = await productsAPI.getAll();
-      setProducts(response.data);
-    } catch (error) { console.error(error); }
+  const handleOpenDialog = () => {
+    resetForm();
+    setDialogOpen(true);
   };
 
-  // --- Calculations for Summary Cards ---
-  const totalSales = invoices
-    .filter(inv => inv.invoice_type === 'sale' && inv.status !== 'cancelled')
-    .reduce((sum, inv) => sum + inv.total, 0);
+  // Handle customer selection
+  const handleCustomerChange = (clientId) => {
+    const client = clients.find(c => c._id === clientId);
+    setInvoiceData(prev => ({
+      ...prev,
+      customer_id: clientId,
+      customer_name: client?.name || '',
+    }));
+  };
 
-  const totalPurchases = invoices
-    .filter(inv => inv.invoice_type === 'purchase' && inv.status !== 'cancelled')
-    .reduce((sum, inv) => sum + inv.total, 0);
+  // Handle product selection for current item
+  const handleProductChange = (productId) => {
+    const product = products.find(p => p._id === productId);
+    if (!product) return;
 
-  const invoicesCount = invoices.length;
-  // --------------------------------------
+    setCurrentItem(prev => ({
+      ...prev,
+      product_id: productId,
+      product_name: product.name,
+      unit_price: product.price?.toString() || '',
+      sale_unit: product.unit_type === 'dual' ? 'count' : 'count',
+      weight_per_unit: product.weight_per_unit || null,
+      quantity: '',
+      weight: '',
+    }));
+  };
 
-  const handleCreateProduct = async (e) => {
-    e.preventDefault();
-    if (!newProduct.name || !newProduct.purchase_price || !newProduct.sale_price) {
-      toast.error("الرجاء تعبئة البيانات الأساسية");
+  // Get selected product details
+  const getSelectedProduct = () => {
+    if (!currentItem.product_id) return null;
+    return products.find(p => p._id === currentItem.product_id);
+  };
+
+  // Handle sale unit toggle
+  const handleSaleUnitChange = (value) => {
+    if (!value) return;
+    setCurrentItem(prev => ({
+      ...prev,
+      sale_unit: value,
+      quantity: '',
+      weight: '',
+    }));
+  };
+
+  // Calculate available stock display
+  const getAvailableStock = (product) => {
+    if (!product) return null;
+    
+    if (product.unit_type === 'dual') {
+      return {
+        count: product.stock_count || 0,
+        weight: product.stock_weight || 0,
+      };
+    }
+    return {
+      count: product.stock_count || 0,
+    };
+  };
+
+  // Calculate equivalent values
+  const getEquivalentDisplay = () => {
+    const product = getSelectedProduct();
+    if (!product || product.unit_type !== 'dual' || !currentItem.weight_per_unit) return null;
+
+    if (currentItem.sale_unit === 'count' && currentItem.quantity) {
+      const weight = parseFloat(currentItem.quantity) * currentItem.weight_per_unit;
+      return `= ${weight.toFixed(2)} كغ`;
+    } else if (currentItem.sale_unit === 'weight' && currentItem.weight) {
+      const count = parseFloat(currentItem.weight) / currentItem.weight_per_unit;
+      return `= ${count.toFixed(2)} قطعة`;
+    }
+    return null;
+  };
+
+  // Add item to invoice
+  const handleAddItem = () => {
+    const product = getSelectedProduct();
+    if (!product) {
+      toast.error('الرجاء اختيار منتج');
       return;
     }
-    try {
-      const productData = {
-        ...newProduct,
-        quantity: parseFloat(newProduct.quantity) || 0,  // ✅ Feature 1: Use parseFloat
-        purchase_price: parseFloat(newProduct.purchase_price),
-        sale_price: parseFloat(newProduct.sale_price),
-        min_quantity: parseFloat(newProduct.min_quantity) || 5  // ✅ Feature 1: Use parseFloat
-      };
-      const response = await productsAPI.create(productData);
-      setProducts([...products, response.data]);
-      toast.success("تم إضافة المنتج بنجاح");
-      setProductDialogOpen(false);
-      setNewProduct({ name: "", purchase_price: "", sale_price: "", quantity: "", min_quantity: 5, description: "" });
-    } catch (error) {
-      toast.error("فشل في إضافة المنتج");
-    }
-  };
 
-  const handleAddItem = () => {
-    setInvoiceItems([...invoiceItems, { product_id: "", quantity: 1 }]);
-  };
-
-  const handleRemoveItem = (index) => {
-    setInvoiceItems(invoiceItems.filter((_, i) => i !== index));
-  };
-
-  // ✅ Feature 1: Updated to handle float quantities
-  const handleItemChange = (index, field, value) => {
-    const updated = [...invoiceItems];
-    let newValue = value;
-
-    if (field === 'quantity') {
-      // Parse as float for fractional support
-      const floatValue = parseFloat(newValue);
-      
-      // 1. Prevent negative and zero values
-      if (isNaN(floatValue) || floatValue <= 0) {
-        newValue = 0.01;  // Minimum quantity
-      } else {
-        newValue = floatValue;
-      }
-
-      // 2. Check stock limit (for sales only)
-      if (invoiceType === 'sale' && updated[index].product_id) {
-        const product = products.find(p => p.id === updated[index].product_id);
-        if (product && newValue > product.quantity) {
-          toast.warning(`الكمية المتوفرة فقط: ${parseFloat(product.quantity).toFixed(2)}`);
-          newValue = product.quantity;
+    let quantity, displayQuantity;
+    
+    if (product.unit_type === 'dual') {
+      if (currentItem.sale_unit === 'count') {
+        quantity = parseFloat(currentItem.quantity);
+        if (!quantity || quantity <= 0) {
+          toast.error('الرجاء إدخال كمية صحيحة');
+          return;
         }
+        displayQuantity = quantity;
+      } else {
+        quantity = parseFloat(currentItem.weight);
+        if (!quantity || quantity <= 0) {
+          toast.error('الرجاء إدخال وزن صحيح');
+          return;
+        }
+        displayQuantity = quantity;
       }
+    } else {
+      quantity = parseFloat(currentItem.quantity);
+      if (!quantity || quantity <= 0) {
+        toast.error('الرجاء إدخال كمية صحيحة');
+        return;
+      }
+      displayQuantity = quantity;
     }
 
-    updated[index][field] = newValue;
-    setInvoiceItems(updated);
+    const unitPrice = parseFloat(currentItem.unit_price);
+    if (!unitPrice || unitPrice < 0) {
+      toast.error('الرجاء إدخال سعر صحيح');
+      return;
+    }
+
+    const total = quantity * unitPrice;
+
+    const newItem = {
+      product_id: currentItem.product_id,
+      product_name: currentItem.product_name,
+      quantity: quantity,
+      unit_price: unitPrice,
+      total: total,
+      sale_unit: product.unit_type === 'dual' ? currentItem.sale_unit : 'count',
+      weight_per_unit: product.weight_per_unit,
+    };
+
+    setInvoiceData(prev => ({
+      ...prev,
+      items: [...prev.items, newItem],
+    }));
+
+    // Reset current item
+    setCurrentItem({
+      product_id: '',
+      product_name: '',
+      quantity: '',
+      weight: '',
+      unit_price: '',
+      sale_unit: 'count',
+      weight_per_unit: null,
+    });
   };
 
-  // ✅ Feature 1: Updated calculation with proper decimal handling
-  const calculateTotal = (items = invoiceItems, type = invoiceType) => {
-    return items.reduce((total, item) => {
-      const product = products.find(p => p.id === item.product_id);
-      if (!product) return total;
-      const price = type === "sale" ? product.sale_price : product.purchase_price;
-      const qty = parseFloat(item.quantity) || 0;
-      return total + (price * qty);
-    }, 0);
+  // Remove item from invoice
+  const handleRemoveItem = (index) => {
+    setInvoiceData(prev => ({
+      ...prev,
+      items: prev.items.filter((_, i) => i !== index),
+    }));
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!useNewContact && !selectedContact) { toast.error("يرجى اختيار جهة اتصال"); return; }
-    if (useNewContact && !newContactName.trim()) { toast.error("يرجى إدخال الاسم"); return; }
-    if (invoiceItems.length === 0) { toast.error("يرجى إضافة منتجات"); return; }
+  // Calculate totals
+  const calculateTotals = () => {
+    const subtotal = invoiceData.items.reduce((sum, item) => sum + item.total, 0);
+    const discount = parseFloat(invoiceData.discount) || 0;
+    const total = subtotal - discount;
+    return { subtotal, discount, total };
+  };
 
-    setSubmitting(true);
+  // Submit invoice
+  const handleSubmit = async () => {
     try {
-      // ✅ Feature 1: Ensure quantities are floats
-      const data = {
-        invoice_type: invoiceType,
-        status: createStatus,
-        items: invoiceItems.map(item => ({ 
-          product_id: item.product_id, 
-          quantity: parseFloat(item.quantity) 
-        })),
-        notes: notes || null
+      if (!invoiceData.customer_id) {
+        toast.error('الرجاء اختيار العميل');
+        return;
+      }
+
+      if (invoiceData.items.length === 0) {
+        toast.error('الرجاء إضافة منتجات للفاتورة');
+        return;
+      }
+
+      const { subtotal, discount, total } = calculateTotals();
+
+      const payload = {
+        ...invoiceData,
+        date: new Date(invoiceData.date).toISOString(),
+        subtotal,
+        discount,
+        total,
       };
-      if (useNewContact) data.new_contact_name = newContactName.trim();
-      else data.contact_id = selectedContact;
 
-      await invoicesAPI.create(data);
-      toast.success("تم إنشاء الفاتورة بنجاح");
-      if (useNewContact) fetchContacts();
-
+      await createInvoice(payload);
+      toast.success('تم إنشاء الفاتورة بنجاح');
       setDialogOpen(false);
       resetForm();
-      fetchInvoices();
-      fetchProducts();
+      fetchData();
     } catch (error) {
-      toast.error("فشل في إنشاء الفاتورة");
-    } finally {
-      setSubmitting(false);
+      const errorMsg = error.response?.data?.detail || 'حدث خطأ أثناء إنشاء الفاتورة';
+      toast.error(errorMsg);
+      console.error(error);
     }
   };
 
-  const resetForm = () => {
-    setInvoiceType("sale");
-    setCreateStatus("pending");
-    setSelectedContact("");
-    setNewContactName("");
-    setUseNewContact(false);
-    setInvoiceItems([]);
-    setNotes("");
-  };
+  // Delete invoice
+  const handleDelete = async (invoice) => {
+    if (!window.confirm(`هل أنت متأكد من حذف الفاتورة: ${invoice.invoice_number}؟`)) {
+      return;
+    }
 
-  const handleView = (invoice) => {
-    setSelectedInvoice(invoice);
-    setViewDialogOpen(true);
-  };
-
-  const handleEdit = (invoice) => {
-    setSelectedInvoice(invoice);
-    setEditItems(invoice.items.map(item => ({ 
-      product_id: item.product_id, 
-      quantity: parseFloat(item.quantity)  // ✅ Feature 1: Parse as float
-    })));
-    setEditNotes(invoice.notes || "");
-    setEditStatus(invoice.status);
-    setEditContactId(invoice.contact_id);
-    setEditDialogOpen(true);
-  };
-
-  const handleEditSubmit = async (e) => {
-    e.preventDefault();
-    setSubmitting(true);
     try {
-      const contact = contacts.find(c => c.id === editContactId);
-      // ✅ Feature 1: Ensure quantities are floats
-      const data = {
-        customer_name: contact ? contact.name : selectedInvoice.contact_name,
-        items: editItems.map(item => ({ 
-          product_id: item.product_id, 
-          quantity: parseFloat(item.quantity) 
-        })),
-        notes: editNotes || null,
-        status: editStatus,
-        invoice_type: selectedInvoice.invoice_type
-      };
-      await invoicesAPI.update(selectedInvoice.id, data);
-      toast.success("تم تحديث الفاتورة");
-      setEditDialogOpen(false);
-      fetchInvoices();
-    } catch (error) { 
-      toast.error("فشل التحديث"); 
-    } finally { 
-      setSubmitting(false); 
+      await deleteInvoice(invoice._id);
+      toast.success('تم حذف الفاتورة بنجاح');
+      fetchData();
+    } catch (error) {
+      toast.error('فشل في حذف الفاتورة');
+      console.error(error);
     }
   };
 
-  const confirmDelete = (invoice) => {
-    setInvoiceToDelete(invoice);
-    setDeleteDialogOpen(true);
+  const formatNumber = (num) => {
+    if (num === undefined || num === null) return '-';
+    return parseFloat(num).toLocaleString('ar-SA', { maximumFractionDigits: 2 });
   };
 
-  const executeDelete = async () => {
-    if (!invoiceToDelete) return;
-    try {
-      await invoicesAPI.delete(invoiceToDelete.id);
-      toast.success("تم حذف الفاتورة بنجاح");
-      fetchInvoices();
-      setDeleteDialogOpen(false);
-      setInvoiceToDelete(null);
-    }
-    catch (error) { toast.error("فشل في حذف الفاتورة"); }
+  const formatDate = (dateStr) => {
+    if (!dateStr) return '-';
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('ar-SA');
   };
 
-  const handleEditAddItem = () => setEditItems([...editItems, { product_id: "", quantity: 1 }]);
-  const handleEditRemoveItem = (index) => setEditItems(editItems.filter((_, i) => i !== index));
-
-  // ✅ Feature 1: Updated to handle float quantities
-  const handleEditItemChange = (index, field, value) => {
-    const updated = [...editItems];
-    let newValue = value;
-
-    if (field === 'quantity') {
-      const floatValue = parseFloat(newValue);
-      
-      // 1. Prevent negative values
-      if (isNaN(floatValue) || floatValue <= 0) {
-        newValue = 0.01;
-      } else {
-        newValue = floatValue;
-      }
-
-      // 2. Check stock (for sales only)
-      if (selectedInvoice.invoice_type === 'sale' && updated[index].product_id) {
-        const product = products.find(p => p.id === updated[index].product_id);
-        if (product && newValue > product.quantity) {
-          toast.warning(`الكمية المتوفرة فقط: ${parseFloat(product.quantity).toFixed(2)}`);
-          newValue = product.quantity;
-        }
-      }
-    }
-
-    updated[index][field] = newValue;
-    setEditItems(updated);
-  };
-
-  const filteredInvoices = invoices.filter((invoice) => {
-    const matchesSearch = invoice.invoice_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      invoice.contact_name.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesStatus = statusFilter === "all" || invoice.status === statusFilter;
-    return matchesSearch && matchesStatus;
-  });
-
-  const filteredContacts = contacts.filter(c =>
-    invoiceType === "sale" ? c.contact_type === "customer" : c.contact_type === "supplier"
-  );
-
-  const getStatusBadge = (status) => {
-    switch (status) {
-      case "paid": return <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200">مدفوعة</Badge>;
-      case "cancelled": return <Badge variant="destructive">ملغاة</Badge>;
-      default: return <Badge variant="secondary">معلقة</Badge>;
-    }
-  };
+  const selectedProduct = getSelectedProduct();
+  const availableStock = getAvailableStock(selectedProduct);
+  const equivalentDisplay = getEquivalentDisplay();
 
   return (
-    <div className="space-y-8 animate-fadeIn pb-10 font-sans">
-
-      {/* 1. Hero Section */}
-      <div className="relative overflow-hidden rounded-3xl bg-slate-900 p-8 text-white shadow-2xl ring-1 ring-white/10">
-        <div className="absolute top-0 left-0 h-full w-full bg-gradient-to-br from-slate-800 to-slate-900 opacity-50"></div>
-        <div className="absolute -right-20 -top-20 h-64 w-64 rounded-full bg-emerald-500 blur-[100px] opacity-20"></div>
-        <div className="absolute -left-20 -bottom-20 h-64 w-64 rounded-full bg-cyan-500 blur-[100px] opacity-20"></div>
-
-        <div className="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight mb-2">الفواتير</h1>
-            <p className="text-slate-400 max-w-lg">
-              إدارة فواتير البيع والشراء ومتابعة المدفوعات والمعاملات المالية.
-            </p>
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="section-header">
+          <div className="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center">
+            <FileText className="h-5 w-5 text-indigo-600" />
           </div>
+          <div>
+            <h1 className="text-xl font-bold text-slate-900">إدارة الفواتير</h1>
+            <p className="text-sm text-slate-500">إنشاء وإدارة فواتير المبيعات</p>
+          </div>
+        </div>
+        <button
+          onClick={handleOpenDialog}
+          className="pro-btn-primary"
+        >
+          <Plus className="h-5 w-5" />
+          فاتورة جديدة
+        </button>
+      </div>
 
-          <Button
-            onClick={() => setDialogOpen(true)}
-            className="bg-white text-slate-900 hover:bg-slate-100 font-bold px-6 h-12 rounded-xl shadow-lg transition-transform hover:scale-105"
-            data-testid="add-invoice-btn"
-          >
-            <Plus className="h-5 w-5 ml-2" />
-            إنشاء فاتورة
-          </Button>
+      {/* Invoices Table */}
+      <div className="pro-card">
+        <div className="overflow-x-auto">
+          <table className="pro-table">
+            <thead>
+              <tr>
+                <th>رقم الفاتورة</th>
+                <th>التاريخ</th>
+                <th>العميل</th>
+                <th>عدد المنتجات</th>
+                <th>الخصم</th>
+                <th>الإجمالي</th>
+                <th className="text-left">الإجراءات</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr>
+                  <td colSpan={7} className="text-center py-12">
+                    <div className="flex items-center justify-center gap-2 text-slate-400">
+                      <div className="w-5 h-5 border-2 border-slate-300 border-t-indigo-600 rounded-full animate-spin" />
+                      جاري التحميل...
+                    </div>
+                  </td>
+                </tr>
+              ) : invoices.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="text-center py-12">
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center">
+                        <FileText className="h-8 w-8 text-slate-400" />
+                      </div>
+                      <p className="text-slate-500">لا توجد فواتير</p>
+                      <button
+                        onClick={handleOpenDialog}
+                        className="text-indigo-600 hover:text-indigo-700 font-medium"
+                      >
+                        إنشاء فاتورة جديدة
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ) : (
+                invoices.map((invoice) => (
+                  <tr key={invoice._id}>
+                    <td className="font-semibold text-slate-900">{invoice.invoice_number}</td>
+                    <td className="text-slate-600">{formatDate(invoice.date)}</td>
+                    <td>{invoice.customer_name}</td>
+                    <td>
+                      <span className="pro-badge-slate">
+                        {invoice.items?.length || 0} منتج
+                      </span>
+                    </td>
+                    <td className="text-slate-600">{formatNumber(invoice.discount)}</td>
+                    <td className="font-bold text-emerald-600">
+                      {formatNumber(invoice.total)}
+                    </td>
+                    <td className="text-left">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleDelete(invoice)}
+                        className="hover:bg-rose-50 hover:text-rose-600"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
 
-      {/* 2. Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <Card className="border-none shadow-sm hover:shadow-xl transition-all duration-300 hover:-translate-y-1 rounded-3xl bg-white overflow-hidden group cursor-pointer">
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-slate-500 mb-1">إجمالي المبيعات</p>
-                <h3 className="text-2xl font-bold text-slate-900">{formatCurrency(totalSales)}</h3>
+      {/* Create Invoice Dialog */}
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader className="border-b border-slate-100 pb-4">
+            <DialogTitle className="text-xl font-bold text-slate-900 flex items-center gap-3">
+              <div className="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center">
+                <FileText className="h-5 w-5 text-indigo-600" />
               </div>
-              <div className="h-12 w-12 rounded-2xl bg-emerald-50 flex items-center justify-center text-emerald-600 group-hover:bg-emerald-500 group-hover:text-white transition-all duration-300">
-                <ShoppingBag className="h-6 w-6" />
+              إنشاء فاتورة جديدة
+            </DialogTitle>
+          </DialogHeader>
+          
+          <div className="space-y-6 py-4">
+            {/* Invoice Header */}
+            <div className="grid grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label className="pro-label flex items-center gap-2">
+                  <FileText className="h-4 w-4 text-slate-400" />
+                  رقم الفاتورة
+                </Label>
+                <Input
+                  value={invoiceData.invoice_number}
+                  onChange={(e) => setInvoiceData(prev => ({ ...prev, invoice_number: e.target.value }))}
+                  placeholder="رقم الفاتورة"
+                  className="pro-input"
+                />
               </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-none shadow-sm hover:shadow-xl transition-all duration-300 hover:-translate-y-1 rounded-3xl bg-white overflow-hidden group cursor-pointer">
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-slate-500 mb-1">إجمالي المشتريات</p>
-                <h3 className="text-2xl font-bold text-slate-900">{formatCurrency(totalPurchases)}</h3>
+              <div className="space-y-2">
+                <Label className="pro-label flex items-center gap-2">
+                  <Calendar className="h-4 w-4 text-slate-400" />
+                  التاريخ
+                </Label>
+                <Input
+                  type="date"
+                  value={invoiceData.date}
+                  onChange={(e) => setInvoiceData(prev => ({ ...prev, date: e.target.value }))}
+                  className="pro-input"
+                />
               </div>
-              <div className="h-12 w-12 rounded-2xl bg-blue-50 flex items-center justify-center text-blue-600 group-hover:bg-blue-500 group-hover:text-white transition-all duration-300">
-                <ShoppingCart className="h-6 w-6" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-none shadow-sm hover:shadow-xl transition-all duration-300 hover:-translate-y-1 rounded-3xl bg-white overflow-hidden group cursor-pointer">
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-slate-500 mb-1">عدد الفواتير</p>
-                <h3 className="text-2xl font-bold text-slate-900">{invoicesCount}</h3>
-              </div>
-              <div className="h-12 w-12 rounded-2xl bg-indigo-50 flex items-center justify-center text-indigo-600 group-hover:bg-indigo-500 group-hover:text-white transition-all duration-300">
-                <Hash className="h-6 w-6" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* 3. Filters & Search */}
-      <Card className="border-none shadow-sm bg-white rounded-2xl overflow-hidden">
-        <CardContent className="p-4">
-          <Tabs value={activeTab} onValueChange={setActiveTab} dir="rtl" className="w-full">
-            <div className="flex flex-col sm:flex-row gap-4 items-center justify-between">
-              <TabsList className="bg-slate-100 p-1 h-12 rounded-xl">
-                <TabsTrigger value="all" className="rounded-lg h-10 px-4 data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-sm">الكل</TabsTrigger>
-                <TabsTrigger value="sale" className="rounded-lg h-10 px-4 data-[state=active]:bg-white data-[state=active]:text-emerald-700 data-[state=active]:shadow-sm">المبيعات</TabsTrigger>
-                <TabsTrigger value="purchase" className="rounded-lg h-10 px-4 data-[state=active]:bg-white data-[state=active]:text-blue-700 data-[state=active]:shadow-sm">المشتريات</TabsTrigger>
-              </TabsList>
-
-              <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
-                <Select value={statusFilter} onValueChange={setStatusFilter}>
-                  <SelectTrigger className="w-full sm:w-[150px] h-12 rounded-xl bg-slate-50 border-slate-100"><SelectValue placeholder="الحالة" /></SelectTrigger>
+              <div className="space-y-2">
+                <Label className="pro-label flex items-center gap-2">
+                  <User className="h-4 w-4 text-slate-400" />
+                  العميل <span className="text-rose-500">*</span>
+                </Label>
+                <Select
+                  value={invoiceData.customer_id}
+                  onValueChange={handleCustomerChange}
+                >
+                  <SelectTrigger className="pro-input">
+                    <SelectValue placeholder="اختر العميل" />
+                  </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">كل الحالات</SelectItem>
-                    <SelectItem value="pending">معلقة ⏳</SelectItem>
-                    <SelectItem value="paid">مدفوعة ✅</SelectItem>
-                    <SelectItem value="cancelled">ملغاة ❌</SelectItem>
+                    {clients.map(client => (
+                      <SelectItem key={client._id} value={client._id}>
+                        {client.name}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
-                <div className="relative w-full sm:w-72">
-                  <Search className="absolute right-4 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-400" />
-                  <Input placeholder="بحث برقم الفاتورة، العميل..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pr-12 h-12 bg-slate-50 border-slate-100 focus:bg-white transition-colors rounded-xl text-base" />
-                </div>
               </div>
             </div>
-          </Tabs>
-        </CardContent>
-      </Card>
 
-      {/* 4. Invoices Table */}
-      <Card className="border-none shadow-sm bg-white overflow-hidden rounded-3xl">
-        <CardContent className="p-0">
-          {loading ? (
-            <div className="flex items-center justify-center py-20"><div className="h-10 w-10 rounded-full border-4 border-slate-200 border-t-emerald-600 animate-spin"></div></div>
-          ) : filteredInvoices.length > 0 ? (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader className="bg-slate-50/80">
-                  <TableRow className="hover:bg-transparent border-slate-100">
-                    <TableHead className="text-right py-5 px-6 font-bold text-slate-600">رقم الفاتورة</TableHead>
-                    <TableHead className="text-right py-5 font-bold text-slate-600">النوع</TableHead>
-                    <TableHead className="text-right py-5 font-bold text-slate-600">العميل/المورد</TableHead>
-                    <TableHead className="text-right py-5 font-bold text-slate-600">الإجمالي</TableHead>
-                    <TableHead className="text-right py-5 font-bold text-slate-600">الحالة</TableHead>
-                    <TableHead className="text-right py-5 font-bold text-slate-600">التاريخ</TableHead>
-                    <TableHead className="text-right py-5 font-bold text-slate-600">الإجراءات</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredInvoices.map((invoice) => (
-                    <TableRow key={invoice.id} className="hover:bg-indigo-50/30 transition-colors border-slate-50 group cursor-pointer hover:-translate-y-1 hover:shadow-lg duration-300">
-                      <TableCell className="font-medium px-6 py-4">
-                        <div className="flex items-center gap-3">
-                          <div className={`p-2 rounded-xl shadow-sm ${invoice.invoice_type === 'sale' ? 'bg-emerald-100 text-emerald-600 group-hover:bg-emerald-200' : 'bg-blue-100 text-blue-600 group-hover:bg-blue-200'} transition-colors`}>
-                            {invoice.invoice_type === 'sale' ? <TrendingUp className="h-5 w-5" /> : <TrendingDown className="h-5 w-5" />}
-                          </div>
-                          <span className="font-bold text-slate-700">{invoice.invoice_number}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="py-4">
-                        <Badge variant="secondary" className={`px-2.5 py-1 rounded-lg ${invoice.invoice_type === 'sale' ? 'bg-emerald-50 text-emerald-700 border-emerald-100 group-hover:bg-emerald-100' : 'bg-blue-50 text-blue-700 border-blue-100 group-hover:bg-blue-100'}`}>
-                          {invoice.invoice_type === 'sale' ? 'بيع' : 'شراء'}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="py-4 text-slate-700 font-medium">{invoice.contact_name}</TableCell>
-                      <TableCell className="py-4 font-bold text-slate-900">{formatCurrency(invoice.total)}</TableCell>
-                      <TableCell className="py-4">{getStatusBadge(invoice.status)}</TableCell>
-                      <TableCell className="text-slate-500 text-sm py-4 dir-ltr text-right font-medium">{formatDateTime(invoice.created_at)}</TableCell>
-                      <TableCell className="py-4">
-                        <div className="flex items-center gap-1">
+            {/* Add Items Section */}
+            <div className="bg-slate-50 rounded-2xl p-5 border border-slate-200">
+              <h4 className="font-semibold text-slate-900 mb-4 flex items-center gap-2">
+                <ShoppingCart className="h-5 w-5 text-indigo-600" />
+                إضافة منتج
+              </h4>
+              
+              <div className="space-y-4">
+                {/* Product and Sale Unit Row */}
+                <div className="grid grid-cols-2 gap-4">
+                  {/* Product Select */}
+                  <div className="space-y-2">
+                    <Label className="pro-label">المنتج</Label>
+                    <Select
+                      value={currentItem.product_id}
+                      onValueChange={handleProductChange}
+                    >
+                      <SelectTrigger className="pro-input">
+                        <SelectValue placeholder="اختر المنتج" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {products.map(product => (
+                          <SelectItem key={product._id} value={product._id}>
+                            <div className="flex items-center gap-2">
+                              <Package className="h-4 w-4" />
+                              {product.name}
+                              {product.unit_type === 'dual' && (
+                                <span className="text-xs text-indigo-600">(ثنائي)</span>
+                              )}
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* Sale Unit Toggle - Only for Dual Products */}
+                  {selectedProduct?.unit_type === 'dual' && (
+                    <div className="space-y-2">
+                      <Label className="pro-label">وحدة البيع</Label>
+                      <ToggleGroup
+                        type="single"
+                        value={currentItem.sale_unit}
+                        onValueChange={handleSaleUnitChange}
+                        className="pro-toggle-group w-full"
+                      >
+                        <ToggleGroupItem value="count" className="pro-toggle-item flex-1">
+                          <Hash className="h-4 w-4 ml-2" />
+                          بالعدد
+                        </ToggleGroupItem>
+                        <ToggleGroupItem value="weight" className="pro-toggle-item flex-1">
+                          <Weight className="h-4 w-4 ml-2" />
+                          بالوزن
+                        </ToggleGroupItem>
+                      </ToggleGroup>
+                    </div>
+                  )}
+                </div>
+
+                {/* Quantity and Price Row */}
+                <div className="grid grid-cols-3 gap-4">
+                  {/* Quantity Input */}
+                  <div className="space-y-2">
+                    <Label className="pro-label">
+                      {selectedProduct?.unit_type === 'dual' && currentItem.sale_unit === 'weight'
+                        ? 'الوزن (كغ)'
+                        : 'الكمية'}
+                    </Label>
+                    <div className="relative">
+                      <Input
+                        type="number"
+                        step={currentItem.sale_unit === 'weight' ? '0.01' : '1'}
+                        value={currentItem.sale_unit === 'weight' ? currentItem.weight : currentItem.quantity}
+                        onChange={(e) => setCurrentItem(prev => ({
+                          ...prev,
+                          [currentItem.sale_unit === 'weight' ? 'weight' : 'quantity']: e.target.value
+                        }))}
+                        placeholder={currentItem.sale_unit === 'weight' ? '0.00' : '0'}
+                        className="pro-input"
+                      />
+                      {equivalentDisplay && (
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-indigo-600 font-medium">
+                          {equivalentDisplay}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Unit Price */}
+                  <div className="space-y-2">
+                    <Label className="pro-label">سعر الوحدة</Label>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={currentItem.unit_price}
+                      onChange={(e) => setCurrentItem(prev => ({ ...prev, unit_price: e.target.value }))}
+                      placeholder="0.00"
+                      className="pro-input"
+                    />
+                  </div>
+
+                  {/* Add Button */}
+                  <div className="space-y-2">
+                    <Label className="pro-label">&nbsp;</Label>
+                    <button
+                      onClick={handleAddItem}
+                      className="pro-btn-primary w-full"
+                      disabled={!currentItem.product_id}
+                    >
+                      <Plus className="h-4 w-4" />
+                      إضافة
+                    </button>
+                  </div>
+                </div>
+
+                {/* Stock Availability */}
+                {selectedProduct && availableStock && (
+                  <div className="bg-white rounded-xl p-3 border border-slate-200 flex items-center gap-3">
+                    <AlertCircle className="h-5 w-5 text-indigo-500" />
+                    <div className="flex items-center gap-4 text-sm">
+                      <span className="text-slate-500">المخزون المتاح:</span>
+                      {selectedProduct.unit_type === 'dual' ? (
+                        <>
+                          <span className="pro-badge-indigo">
+                            {formatNumber(availableStock.count)} قطعة
+                          </span>
+                          <span className="pro-badge-emerald">
+                            {formatNumber(availableStock.weight)} كغ
+                          </span>
+                          <span className="text-xs text-slate-400">
+                            (الوزن لكل وحدة: {selectedProduct.weight_per_unit} كغ)
+                          </span>
+                        </>
+                      ) : (
+                        <span className="pro-badge-slate">
+                          {formatNumber(availableStock.count)} قطعة
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Items Table */}
+            {invoiceData.items.length > 0 && (
+              <div className="border border-slate-200 rounded-2xl overflow-hidden">
+                <table className="pro-table">
+                  <thead>
+                    <tr>
+                      <th>المنتج</th>
+                      <th>وحدة البيع</th>
+                      <th>الكمية</th>
+                      <th>سعر الوحدة</th>
+                      <th>الإجمالي</th>
+                      <th className="w-16"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {invoiceData.items.map((item, index) => (
+                      <tr key={index}>
+                        <td className="font-medium">{item.product_name}</td>
+                        <td>
+                          {item.sale_unit === 'count' ? (
+                            <span className="pro-badge-slate">
+                              <Hash className="h-3 w-3" />
+                              عدد
+                            </span>
+                          ) : (
+                            <span className="pro-badge-indigo">
+                              <Weight className="h-3 w-3" />
+                              وزن
+                            </span>
+                          )}
+                        </td>
+                        <td>
+                          {formatNumber(item.quantity)}
+                          {item.sale_unit === 'weight' && ' كغ'}
+                        </td>
+                        <td>{formatNumber(item.unit_price)}</td>
+                        <td className="font-semibold text-emerald-600">
+                          {formatNumber(item.total)}
+                        </td>
+                        <td>
                           <Button
                             variant="ghost"
                             size="icon"
-                            onClick={(e) => { e.stopPropagation(); handleView(invoice); }}
-                            className="h-8 w-8 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all hover:scale-110"
-                          >
-                            <Eye className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={(e) => { e.stopPropagation(); handleEdit(invoice); }}
-                            className="h-8 w-8 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all hover:scale-110"
-                          >
-                            <Edit className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={(e) => { e.stopPropagation(); confirmDelete(invoice); }}
-                            className="h-8 w-8 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all hover:scale-110"
+                            onClick={() => handleRemoveItem(index)}
+                            className="hover:bg-rose-50 hover:text-rose-600"
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center py-24 text-center">
-              <div className="h-20 w-20 bg-slate-50 rounded-full flex items-center justify-center mb-4">
-                <FileText className="h-10 w-10 text-slate-300" />
-              </div>
-              <h3 className="text-lg font-bold text-slate-900">لا توجد فواتير</h3>
-              <p className="text-slate-500 max-w-sm mt-2">لم يتم إنشاء أي فواتير بيع أو شراء حتى الآن.</p>
-              <Button onClick={() => setDialogOpen(true)} className="mt-6 bg-slate-900 text-white hover:bg-slate-800"><Plus className="h-4 w-4 ml-2" />إنشاء أول فاتورة</Button>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Dialogs */}
-      {/* Create Invoice Dialog */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto rounded-3xl" dir="rtl">
-          <DialogHeader><DialogTitle className="text-xl font-bold text-slate-900">إنشاء فاتورة جديدة</DialogTitle></DialogHeader>
-          <form onSubmit={handleSubmit} className="space-y-5 mt-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label className="text-slate-600 mb-1.5 block">نوع الفاتورة</Label>
-                <Select value={invoiceType} onValueChange={(v) => { setInvoiceType(v); setSelectedContact(""); setUseNewContact(false); }}>
-                  <SelectTrigger className="h-11 rounded-xl bg-slate-50 border-slate-200 focus:bg-white"><SelectValue /></SelectTrigger>
-                  <SelectContent><SelectItem value="sale">فاتورة بيع</SelectItem><SelectItem value="purchase">فاتورة شراء</SelectItem></SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label className="text-slate-600 mb-1.5 block">حالة الدفع</Label>
-                <Select value={createStatus} onValueChange={setCreateStatus}>
-                  <SelectTrigger className="h-11 rounded-xl bg-slate-50 border-slate-200 focus:bg-white"><SelectValue /></SelectTrigger>
-                  <SelectContent><SelectItem value="pending">معلقة ⏳</SelectItem><SelectItem value="paid">مدفوعة ✅</SelectItem></SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div>
-              <Label className="text-slate-600 mb-1.5 block">{invoiceType === "sale" ? "العميل" : "المورد"}</Label>
-              {!useNewContact ? (
-                <div className="flex gap-2">
-                  <div className="flex-1">
-                    <SearchableSelect options={contacts} value={selectedContact} onChange={setSelectedContact} placeholder="اختر أو ابحث..." />
-                  </div>
-                  <Button type="button" variant="outline" className="h-11 w-11 rounded-xl border-slate-200" onClick={() => setUseNewContact(true)}><UserPlus className="h-5 w-5 text-slate-600" /></Button>
-                </div>
-              ) : (
-                <div className="flex gap-2">
-                  <Input placeholder="الاسم الجديد..." value={newContactName} onChange={(e) => setNewContactName(e.target.value)} className="h-11 rounded-xl bg-slate-50 border-slate-200 focus:bg-white flex-1" />
-                  <Button type="button" variant="outline" className="h-11 px-4 rounded-xl border-slate-200" onClick={() => { setUseNewContact(false); setNewContactName(""); }}>إلغاء</Button>
-                </div>
-              )}
-            </div>
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <Label className="text-slate-600">المنتجات</Label>
-                <div className="flex gap-2">
-                  <Button type="button" variant="outline" size="sm" onClick={() => setProductDialogOpen(true)} className="h-9 rounded-lg border-slate-200 text-slate-600 hover:text-emerald-700 hover:bg-emerald-50"><PackagePlus className="h-3.5 w-3.5 ml-1.5" />منتج جديد</Button>
-                  <Button type="button" variant="outline" size="sm" onClick={handleAddItem} className="h-9 rounded-lg border-slate-200 text-slate-600 hover:text-blue-700 hover:bg-blue-50"><Plus className="h-3.5 w-3.5 ml-1.5" />إضافة منتج</Button>
-                </div>
-              </div>
-              {invoiceItems.length > 0 ? (
-                <div className="border border-slate-200 rounded-xl p-4 space-y-3 bg-slate-50/50">
-                  {invoiceItems.map((item, index) => {
-                    const product = products.find(p => p.id === item.product_id);
-                    const price = product ? (invoiceType === "sale" ? product.sale_price : product.purchase_price) : 0;
-                    const qty = parseFloat(item.quantity) || 0;
-                    const itemTotal = price * qty;
-                    return (
-                      <div key={index} className="flex items-end gap-3">
-                        <div className="flex-1">
-                          <Label className="text-xs text-slate-500 mb-1 block">المنتج</Label>
-                          <SearchableSelect options={products} value={item.product_id} onChange={(v) => handleItemChange(index, 'product_id', v)} placeholder="اختر منتج..." />
-                        </div>
-                        <div className="w-28">
-                          <Label className="text-xs text-slate-500 mb-1 block">الكمية</Label>
-                          {/* ✅ Feature 1: step="0.01" for fractional quantities */}
-                          <Input
-                            type="number"
-                            step="0.01"
-                            min="0.01"
-                            value={item.quantity}
-                            onChange={(e) => handleItemChange(index, 'quantity', e.target.value)}
-                            className="h-11 bg-white border-slate-200 rounded-xl text-center"
-                          />
-                        </div>
-                        <div className="w-28">
-                          <Label className="text-xs text-slate-500 mb-1 block">السعر</Label>
-                          <Input value={formatCurrency(price)} disabled className="h-11 bg-slate-100 border-transparent rounded-xl text-center text-slate-500" />
-                        </div>
-                        <div className="w-32">
-                          <Label className="text-xs text-slate-500 mb-1 block">الإجمالي</Label>
-                          <Input value={formatCurrency(itemTotal)} disabled className="h-11 bg-slate-100 border-transparent rounded-xl text-center font-bold text-slate-700" />
-                        </div>
-                        <Button type="button" variant="ghost" size="icon" onClick={() => handleRemoveItem(index)} className="h-11 w-11 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl mb-[1px]"><Trash2 className="h-4 w-4" /></Button>
-                      </div>
-                    );
-                  })}
-                  <div className="pt-4 mt-2 border-t border-slate-200 flex justify-between items-center">
-                    <span className="font-bold text-slate-600">الإجمالي الكلي:</span>
-                    <span className="text-xl font-bold text-slate-900 bg-white px-3 py-1 rounded-lg border border-slate-200 shadow-sm">{formatCurrency(calculateTotal())}</span>
-                  </div>
-                </div>
-              ) : (
-                <div className="border-2 border-dashed border-slate-200 rounded-xl p-8 text-center"><p className="text-sm text-slate-500">اضغط على "إضافة منتج"</p></div>
-              )}
-            </div>
-            <div>
-              <Label className="text-slate-600 mb-1.5 block">ملاحظات</Label>
-              <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="أضف ملاحظات..." className="h-11 rounded-xl bg-slate-50 border-slate-200 focus:bg-white" />
-            </div>
-            <DialogFooter className="gap-3 sm:justify-start">
-              <Button type="submit" disabled={submitting} className="h-11 px-8 rounded-xl bg-slate-900 text-white hover:bg-slate-800">{submitting ? "جاري الإنشاء..." : "إنشاء الفاتورة"}</Button>
-              <Button type="button" variant="outline" onClick={() => { setDialogOpen(false); resetForm(); }} className="h-11 px-6 rounded-xl text-slate-600 border-slate-200 hover:bg-slate-100 hover:text-slate-900">إلغاء</Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* New Product Dialog */}
-      <Dialog open={productDialogOpen} onOpenChange={setProductDialogOpen}>
-        <DialogContent className="max-w-md rounded-3xl" dir="rtl">
-          <DialogHeader><DialogTitle className="text-xl font-bold text-slate-900">إضافة منتج جديد</DialogTitle></DialogHeader>
-          <form onSubmit={handleCreateProduct} className="space-y-5 mt-4">
-            <div><Label className="text-slate-600 mb-1.5 block">اسم المنتج</Label><Input value={newProduct.name} onChange={(e) => setNewProduct({ ...newProduct, name: e.target.value })} required className="h-11 rounded-xl bg-slate-50 border-slate-200 focus:bg-white" /></div>
-            <div className="grid grid-cols-2 gap-4">
-              <div><Label className="text-slate-600 mb-1.5 block">سعر الشراء</Label><Input type="number" step="0.01" value={newProduct.purchase_price} onChange={(e) => setNewProduct({ ...newProduct, purchase_price: e.target.value })} required className="h-11 rounded-xl bg-slate-50 border-slate-200 focus:bg-white" /></div>
-              <div><Label className="text-slate-600 mb-1.5 block">سعر البيع</Label><Input type="number" step="0.01" value={newProduct.sale_price} onChange={(e) => setNewProduct({ ...newProduct, sale_price: e.target.value })} required className="h-11 rounded-xl bg-slate-50 border-slate-200 focus:bg-white" /></div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label className="text-slate-600 mb-1.5 block">الكمية</Label>
-                {/* ✅ Feature 1: step="0.01" for fractional quantities */}
-                <Input type="number" step="0.01" min="0" value={newProduct.quantity} onChange={(e) => setNewProduct({ ...newProduct, quantity: e.target.value })} className="h-11 rounded-xl bg-slate-50 border-slate-200 focus:bg-white" />
-              </div>
-              <div>
-                <Label className="text-slate-600 mb-1.5 block">التنبيه</Label>
-                {/* ✅ Feature 1: step="0.01" for fractional quantities */}
-                <Input type="number" step="0.01" value={newProduct.min_quantity} onChange={(e) => setNewProduct({ ...newProduct, min_quantity: e.target.value })} className="h-11 rounded-xl bg-slate-50 border-slate-200 focus:bg-white" />
-              </div>
-            </div>
-            <DialogFooter className="gap-3 sm:justify-start"><Button type="submit" className="h-11 px-8 rounded-xl bg-slate-900 text-white hover:bg-slate-800">حفظ</Button><Button type="button" variant="outline" onClick={() => setProductDialogOpen(false)} className="h-11 px-6 rounded-xl text-slate-600 border-slate-200 hover:bg-slate-100 hover:text-slate-900">إلغاء</Button></DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* Edit Invoice Dialog */}
-      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto rounded-3xl" dir="rtl">
-          <DialogHeader><DialogTitle className="text-xl font-bold text-slate-900">تعديل الفاتورة</DialogTitle></DialogHeader>
-          {selectedInvoice && (
-            <form onSubmit={handleEditSubmit} className="space-y-5 mt-4">
-              <div className="grid grid-cols-2 gap-4 p-5 bg-slate-50 rounded-2xl border border-slate-100">
-                <div><p className="text-xs text-slate-500 mb-1">النوع</p><p className="font-bold text-slate-800">{selectedInvoice.invoice_type === 'sale' ? 'فاتورة بيع' : 'فاتورة شراء'}</p></div>
-                <div><Label className="text-xs text-slate-500 mb-1 block">العميل/المورد</Label><SearchableSelect options={contacts} value={editContactId} onChange={setEditContactId} placeholder="اختر..." /></div>
-              </div>
-              <div>
-                <Label className="text-slate-600 mb-1.5 block">حالة الفاتورة</Label>
-                <Select value={editStatus} onValueChange={setEditStatus}>
-                  <SelectTrigger className="h-11 rounded-xl bg-slate-50 border-slate-200 focus:bg-white"><SelectValue /></SelectTrigger>
-                  <SelectContent><SelectItem value="pending">معلقة ⏳</SelectItem><SelectItem value="paid">مدفوعة ✅</SelectItem><SelectItem value="cancelled">ملغاة ❌</SelectItem></SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-3">
-                <div className="flex items-center justify-between"><Label>المنتجات</Label><Button type="button" variant="outline" size="sm" onClick={handleEditAddItem}><Plus className="h-3.5 w-3.5 ml-1.5" />إضافة</Button></div>
-                <div className="border border-slate-200 rounded-xl p-4 space-y-3 bg-slate-50/50">
-                  {editItems.map((item, index) => {
-                    const product = products.find(p => p.id === item.product_id);
-                    const price = product ? (selectedInvoice.invoice_type === "sale" ? product.sale_price : product.purchase_price) : 0;
-                    const qty = parseFloat(item.quantity) || 0;
-                    const itemTotal = price * qty;
-                    return (
-                      <div key={index} className="flex items-end gap-3">
-                        <div className="flex-1"><Label className="text-xs mb-1 block">المنتج</Label><SearchableSelect options={products} value={item.product_id} onChange={(v) => handleEditItemChange(index, 'product_id', v)} placeholder="اختر..." /></div>
-                        <div className="w-28">
-                          <Label className="text-xs mb-1 block">الكمية</Label>
-                          {/* ✅ Feature 1: step="0.01" for fractional quantities */}
-                          <Input
-                            type="number"
-                            step="0.01"
-                            min="0.01"
-                            value={item.quantity}
-                            onChange={(e) => handleEditItemChange(index, 'quantity', e.target.value)}
-                            className="h-11 bg-white border-slate-200 rounded-xl text-center"
-                          />
-                        </div>
-                        <div className="w-28"><Label className="text-xs mb-1 block">السعر</Label><Input value={formatCurrency(price)} disabled className="h-11 bg-slate-100 border-transparent rounded-xl text-center text-slate-500" /></div>
-                        <div className="w-32"><Label className="text-xs mb-1 block">الإجمالي</Label><Input value={formatCurrency(itemTotal)} disabled className="h-11 bg-slate-100 border-transparent rounded-xl text-center font-bold text-slate-700" /></div>
-                        <Button type="button" variant="ghost" size="icon" onClick={() => handleEditRemoveItem(index)} className="h-11 w-11 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl mb-[1px]"><Trash2 className="h-4 w-4" /></Button>
-                      </div>
-                    );
-                  })}
-                  <div className="pt-4 mt-2 border-t border-slate-200 flex justify-between items-center"><span className="font-bold">الإجمالي:</span><span className="text-xl font-bold bg-white px-3 py-1 rounded-lg border border-slate-200">{formatCurrency(calculateTotal(editItems, selectedInvoice.invoice_type))}</span></div>
-                </div>
-              </div>
-              <DialogFooter className="gap-3 sm:justify-start"><Button type="submit" disabled={submitting} className="h-11 px-8 rounded-xl bg-slate-900 text-white hover:bg-slate-800">{submitting ? "جاري الحفظ..." : "حفظ التعديلات"}</Button><Button type="button" variant="outline" onClick={() => setEditDialogOpen(false)} className="h-11 px-6 rounded-xl text-slate-600 border-slate-200 hover:bg-slate-100 hover:text-slate-900">إلغاء</Button></DialogFooter>
-            </form>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      {/* View Invoice Dialog */}
-      <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
-        <DialogContent className="max-w-2xl rounded-3xl" dir="rtl">
-          <DialogHeader>
-            <DialogTitle className="text-xl font-bold text-slate-900">تفاصيل الفاتورة</DialogTitle>
-          </DialogHeader>
-          {selectedInvoice && (
-            <div className="space-y-6 mt-2">
-              <div className="grid grid-cols-2 gap-4 p-5 bg-slate-50 rounded-2xl border border-slate-100">
-                <div>
-                  <p className="text-xs text-slate-500 mb-1">رقم الفاتورة</p>
-                  <p className="font-bold text-slate-800 text-lg">{selectedInvoice.invoice_number}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-slate-500 mb-1">النوع</p>
-                  <Badge variant="outline" className={`px-2.5 py-0.5 ${selectedInvoice.invoice_type === 'sale' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>
-                    {selectedInvoice.invoice_type === 'sale' ? 'فاتورة بيع' : 'فاتورة شراء'}
-                  </Badge>
-                </div>
-                <div>
-                  <p className="text-xs text-slate-500 mb-1">{selectedInvoice.invoice_type === 'sale' ? 'العميل' : 'المورد'}</p>
-                  <p className="font-bold text-slate-800 text-lg">{selectedInvoice.contact_name}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-slate-500 mb-1">التاريخ</p>
-                  <p className="font-medium text-slate-700 dir-ltr text-right">
-                    {formatDateTime(selectedInvoice.created_at)}
-                  </p>
-                </div>
-              </div>
-
-              <div className="border border-slate-100 rounded-xl overflow-hidden">
-                <Table>
-                  <TableHeader className="bg-slate-50">
-                    <TableRow>
-                      <TableHead className="text-right">المنتج</TableHead>
-                      <TableHead className="text-right">الكمية</TableHead>
-                      <TableHead className="text-right">السعر</TableHead>
-                      <TableHead className="text-right">الإجمالي</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {selectedInvoice.items.map((item, idx) => (
-                      <TableRow key={idx}>
-                        <TableCell className="font-medium">{item.product_name}</TableCell>
-                        {/* ✅ Feature 1: Display quantity with 2 decimal places */}
-                        <TableCell>{parseFloat(item.quantity).toFixed(2)}</TableCell>
-                        <TableCell>{formatCurrency(item.unit_price)}</TableCell>
-                        <TableCell className="font-bold">{formatCurrency(item.total)}</TableCell>
-                      </TableRow>
+                        </td>
+                      </tr>
                     ))}
-                  </TableBody>
-                </Table>
+                  </tbody>
+                </table>
               </div>
+            )}
 
-              <div className="flex justify-between items-center p-5 bg-slate-900 text-white rounded-2xl shadow-lg">
-                <span className="font-medium text-slate-300">الإجمالي النهائي</span>
-                <span className="text-3xl font-bold">{formatCurrency(selectedInvoice.total)}</span>
-              </div>
-
-              {selectedInvoice.notes && (
-                <div className="p-4 bg-amber-50 rounded-xl border border-amber-100 text-sm text-amber-800 flex items-start gap-2">
-                  <FileText className="h-4 w-4 mt-0.5 text-amber-600" />
-                  <div>
-                    <span className="font-bold block mb-1">ملاحظات:</span>
-                    {selectedInvoice.notes}
-                  </div>
+            {/* Totals */}
+            <div className="flex justify-end">
+              <div className="w-80 space-y-3 bg-slate-50 rounded-2xl p-5 border border-slate-200">
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-600">المجموع الفرعي:</span>
+                  <span className="font-medium">{formatNumber(calculateTotals().subtotal)}</span>
                 </div>
-              )}
-
-              <div className="flex justify-end gap-3 pt-2">
-                <Button variant="outline" onClick={() => setViewDialogOpen(false)} className="h-10 rounded-xl px-5 text-slate-600 border-slate-200 hover:bg-slate-100 hover:text-slate-900">
-                  إغلاق
-                </Button>
-                <Button variant="outline" onClick={() => { setViewDialogOpen(false); handleEdit(selectedInvoice); }} className="h-10 rounded-xl px-5 text-slate-600 border-slate-200 hover:bg-slate-100 hover:text-slate-900">
-                  <Edit className="h-4 w-4 ml-2" />
-                  تعديل
-                </Button>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-600">الخصم:</span>
+                  <Input
+                    type="number"
+                    className="w-32 h-9 pro-input"
+                    value={invoiceData.discount}
+                    onChange={(e) => setInvoiceData(prev => ({ ...prev, discount: e.target.value }))}
+                  />
+                </div>
+                <div className="flex justify-between text-lg font-bold border-t border-slate-200 pt-3">
+                  <span>الإجمالي:</span>
+                  <span className="text-emerald-600">{formatNumber(calculateTotals().total)}</span>
+                </div>
               </div>
             </div>
-          )}
-        </DialogContent>
-      </Dialog>
 
-      {/* 🆕 نافذة تأكيد الحذف */}
-      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <DialogContent className="max-w-sm rounded-3xl p-6" dir="rtl">
-          <div className="flex flex-col items-center text-center gap-4 pt-2">
-            <div className="h-14 w-14 rounded-full bg-red-100 flex items-center justify-center mb-2">
-              <AlertCircle className="h-8 w-8 text-red-600" />
+            {/* Notes */}
+            <div className="space-y-2">
+              <Label className="pro-label">ملاحظات</Label>
+              <Input
+                value={invoiceData.notes}
+                onChange={(e) => setInvoiceData(prev => ({ ...prev, notes: e.target.value }))}
+                placeholder="أي ملاحظات إضافية..."
+                className="pro-input"
+              />
             </div>
-            <DialogHeader className="space-y-2">
-              <DialogTitle className="text-xl font-bold text-slate-900 text-center">تأكيد حذف الفاتورة</DialogTitle>
-              <div className="text-slate-500 text-sm max-w-xs mx-auto">
-                هل أنت متأكد أنك تريد حذف الفاتورة رقم <span className="font-bold text-slate-900">"{invoiceToDelete?.invoice_number}"</span>؟
-                <br />
-                لا يمكن التراجع عن هذا الإجراء لاحقاً.
-              </div>
-            </DialogHeader>
+          </div>
 
-            <DialogFooter className="flex gap-2 w-full mt-4">
-              <Button variant="outline" onClick={() => setDeleteDialogOpen(false)} className="flex-1 h-11 rounded-xl text-slate-600 border-slate-200 hover:bg-slate-100 hover:text-slate-900">
-                إلغاء
-              </Button>
-              <Button onClick={executeDelete} className="flex-1 h-11 rounded-xl bg-red-600 hover:bg-red-700 text-white shadow-md shadow-red-200">
-                حذف نهائي
-              </Button>
-            </DialogFooter>
+          <div className="flex gap-3 pt-4 border-t border-slate-100">
+            <button
+              onClick={() => setDialogOpen(false)}
+              className="pro-btn-secondary flex-1"
+            >
+              إلغاء
+            </button>
+            <button
+              onClick={handleSubmit}
+              className="pro-btn-primary flex-1"
+            >
+              حفظ الفاتورة
+            </button>
           </div>
         </DialogContent>
       </Dialog>
-
     </div>
   );
-}
+};
+
+export default Invoices;

@@ -1,882 +1,787 @@
-from fastapi import FastAPI, APIRouter, HTTPException
-from fastapi.responses import StreamingResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
+"""
+ALMoheat Accounting System - Backend API v2.0
+FastAPI + MongoDB with Strict Dual-Unit System
+"""
+
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-from dotenv import load_dotenv
-import os
-import sys
-import logging
-import uuid
-from datetime import datetime, timezone, timedelta
-from typing import List, Optional, Literal, Dict, Any
-from pydantic import BaseModel, Field, ConfigDict
-from io import BytesIO
+from bson import ObjectId
+from datetime import datetime, date
+from typing import Optional, List, Literal
+from pydantic import BaseModel, Field, field_validator, model_validator
+from enum import Enum
 import pandas as pd
-import webview 
-import threading
-import uvicorn
-import time
+from io import BytesIO
+from fastapi.responses import StreamingResponse
 
-# ✅ المتغير العام للنافذة (ضروري لعمل backup_excel)
-window = None
+# Initialize FastAPI app
+app = FastAPI(title="ALMoheat Accounting System", version="2.0.0")
 
-# ---------------------------------------------------------
-# 1. إعداد المسارات
-# ---------------------------------------------------------
-def resource_path(relative_path):
-    try:
-        base_path = sys._MEIPASS
-    except Exception:
-        base_path = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(base_path, relative_path)
-
-ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-if getattr(sys, 'frozen', False):
-    ROOT_DIR = sys._MEIPASS
-
-load_dotenv(os.path.join(ROOT_DIR, '.env'))
-
-mongo_url = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
-client = AsyncIOMotorClient(mongo_url)
-db_name = os.environ.get('DB_NAME', 'account_db')
-db = client[db_name]
-
-app = FastAPI(title="المُحيط - نظام المحاسبة")
-api_router = APIRouter(prefix="/api")
-
+# CORS Middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=True,
     allow_origins=["*"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ==================== (MODELS) ====================
+# MongoDB Connection
+MONGO_URL = "mongodb://localhost:27017"
+client = AsyncIOMotorClient(MONGO_URL)
+db = client.almoheat_db
+
+# ==================== ENUMS ====================
+
+class UnitType(str, Enum):
+    SIMPLE = "simple"
+    DUAL = "dual"
+
+class SaleUnit(str, Enum):
+    COUNT = "count"
+    WEIGHT = "weight"
+
+class TransactionType(str, Enum):
+    INCOME = "income"
+    EXPENSE = "expense"
+
+# ==================== PRODUCT MODELS ====================
+
 class ProductBase(BaseModel):
     name: str
-    purchase_price: float
-    sale_price: float
-    quantity: float  # ✅ Feature 1: Changed from int to float for fractional support
-    min_quantity: float = 10.0  # ✅ Feature 1: Changed from int to float
-    description: Optional[str] = None
+    cost: float = Field(ge=0)
+    price: float = Field(ge=0)
+    unit_type: UnitType = UnitType.SIMPLE
+    weight_per_unit: Optional[float] = Field(default=None, ge=0)
+    stock_count: float = Field(default=0, ge=0)
+    stock_weight: float = Field(default=0, ge=0)
+    
+    @model_validator(mode='after')
+    def validate_dual_unit(self):
+        """Validate dual unit products have weight_per_unit"""
+        if self.unit_type == UnitType.DUAL:
+            if self.weight_per_unit is None or self.weight_per_unit <= 0:
+                raise ValueError('weight_per_unit is required and must be > 0 when unit_type is "dual"')
+            # Ensure stock_weight is synchronized
+            expected_weight = self.stock_count * self.weight_per_unit
+            if abs(self.stock_weight - expected_weight) > 0.001:  # Small tolerance for float
+                self.stock_weight = expected_weight
+        return self
 
-class ProductCreate(ProductBase): 
+class ProductCreate(ProductBase):
     pass
 
 class ProductUpdate(BaseModel):
     name: Optional[str] = None
-    purchase_price: Optional[float] = None
-    sale_price: Optional[float] = None
-    quantity: Optional[float] = None  # ✅ Feature 1: Changed from int to float
-    min_quantity: Optional[float] = None  # ✅ Feature 1: Changed from int to float
-    description: Optional[str] = None
+    cost: Optional[float] = Field(default=None, ge=0)
+    price: Optional[float] = Field(default=None, ge=0)
+    unit_type: Optional[UnitType] = None
+    weight_per_unit: Optional[float] = Field(default=None, ge=0)
+    stock_count: Optional[float] = Field(default=None, ge=0)
+    stock_weight: Optional[float] = Field(default=None, ge=0)
 
 class Product(ProductBase):
-    model_config = ConfigDict(extra="ignore")
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    id: str = Field(alias="_id")
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        populate_by_name = True
+        json_encoders = {ObjectId: str}
 
-class ContactBase(BaseModel):
-    name: str
-    contact_type: Literal["customer", "supplier"]
-    phone: Optional[str] = None
-    email: Optional[str] = None
-    address: Optional[str] = None
-    balance: float = 0.0
+# ==================== INVOICE ITEM MODELS ====================
 
-class ContactCreate(ContactBase): 
-    pass
-
-class ContactUpdate(BaseModel):
-    name: Optional[str] = None
-    phone: Optional[str] = None
-    email: Optional[str] = None
-    address: Optional[str] = None
-    balance: Optional[float] = None
-
-class Contact(ContactBase):
-    model_config = ConfigDict(extra="ignore")
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-class InvoiceItemBase(BaseModel):
+class InvoiceItem(BaseModel):
     product_id: str
     product_name: str
-    quantity: float  # ✅ Feature 1: Changed from int to float for fractional support
-    unit_price: float
+    quantity: float = Field(gt=0)
+    unit_price: float = Field(ge=0)
     total: float
+    sale_unit: SaleUnit = SaleUnit.COUNT
+    weight_per_unit: Optional[float] = None
 
-class InvoiceItemCreate(BaseModel):
-    product_id: str
-    quantity: float  # ✅ Feature 1: Changed from int to float for fractional support
-
-class InvoiceBase(BaseModel):
-    invoice_type: Literal["sale", "purchase"]
-    contact_id: str
-    contact_name: str
-    notes: Optional[str] = None
-
-class InvoiceCreate(BaseModel):
-    invoice_type: Literal["sale", "purchase"]
-    contact_id: Optional[str] = None
-    new_contact_name: Optional[str] = None
-    items: List[InvoiceItemCreate]
-    notes: Optional[str] = None
-    status: Literal["pending", "paid", "cancelled"] = "pending"
-
-class Invoice(InvoiceBase):
-    model_config = ConfigDict(extra="ignore")
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    invoice_number: str = ""
-    items: List[InvoiceItemBase] = []
-    subtotal: float = 0.0
-    tax: float = 0.0
-    total: float = 0.0
-    status: Literal["pending", "paid", "cancelled"] = "pending"
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-class CashTransactionBase(BaseModel):
-    transaction_type: Literal["receipt", "payment", "expense"]  # ✅ Added "expense" type
-    amount: float
-    description: str
-    contact_id: Optional[str] = None
-    contact_name: Optional[str] = None
-    invoice_id: Optional[str] = None
-
-class CashTransactionCreate(CashTransactionBase): 
+class InvoiceItemDisplay(InvoiceItem):
+    """Extended invoice item for display in reports"""
     pass
 
-class CashTransactionUpdate(BaseModel):
-    transaction_type: Optional[Literal["receipt", "payment", "expense"]] = None
-    amount: Optional[float] = None
-    description: Optional[str] = None
-    contact_id: Optional[str] = None
+# ==================== INVOICE MODELS ====================
 
-class CashTransaction(CashTransactionBase):
-    model_config = ConfigDict(extra="ignore")
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-# ✅ Feature 4: New Expense Model
-class ExpenseCreate(BaseModel):
-    name: str
-    amount: float
+class InvoiceBase(BaseModel):
+    customer_id: str
+    customer_name: str
+    invoice_number: str
+    date: datetime
+    items: List[InvoiceItem]
+    subtotal: float
+    discount: float = Field(default=0, ge=0)
+    total: float
     notes: Optional[str] = None
 
-class Expense(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    name: str
-    amount: float
-    notes: Optional[str] = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+class InvoiceCreate(InvoiceBase):
+    pass
 
-def deserialize_datetime(doc, fields=['created_at', 'updated_at']):
-    for field in fields:
-        if field in doc and isinstance(doc[field], str):
-            try: 
-                doc[field] = datetime.fromisoformat(doc[field])
-            except: 
-                pass
+class Invoice(InvoiceBase):
+    id: str = Field(alias="_id")
+    created_at: datetime
+    
+    class Config:
+        populate_by_name = True
+        json_encoders = {ObjectId: str}
+
+# ==================== CLIENT MODELS ====================
+
+class ClientBase(BaseModel):
+    name: str
+    phone: Optional[str] = None
+    balance: float = Field(default=0)
+
+class ClientCreate(ClientBase):
+    pass
+
+class ClientUpdate(BaseModel):
+    name: Optional[str] = None
+    phone: Optional[str] = None
+    balance: Optional[float] = None
+
+class Client(ClientBase):
+    id: str = Field(alias="_id")
+    created_at: datetime
+    last_transaction_date: Optional[datetime] = None
+    
+    class Config:
+        populate_by_name = True
+        json_encoders = {ObjectId: str}
+
+# ==================== EXPENSE/CASH MODELS ====================
+
+class ExpenseBase(BaseModel):
+    date: datetime
+    type: TransactionType
+    amount: float = Field(gt=0)
+    note: Optional[str] = None
+
+class ExpenseCreate(ExpenseBase):
+    pass
+
+class Expense(ExpenseBase):
+    id: str = Field(alias="_id")
+    created_at: datetime
+    
+    class Config:
+        populate_by_name = True
+        json_encoders = {ObjectId: str}
+
+# ==================== HELPER FUNCTIONS ====================
+
+def serialize_doc(doc):
+    """Convert MongoDB document to serializable dict"""
+    if doc is None:
+        return None
+    doc["_id"] = str(doc["_id"])
     return doc
 
-async def get_next_invoice_number(invoice_type: str) -> str:
-    prefix = "INV" if invoice_type == "sale" else "PUR"
-    count = await db.invoices.count_documents({"invoice_type": invoice_type})
-    return f"{prefix}-{str(count + 1).zfill(6)}"
+def serialize_docs(docs):
+    """Convert multiple MongoDB documents"""
+    return [serialize_doc(doc) for doc in docs]
 
-async def get_or_create_contact(name: str):
-    if not name: 
-        return None
-    clean_name = name.strip()
-    existing = await db.contacts.find_one({"name": clean_name})
-    if existing: 
-        return existing["id"]
-    new_contact = Contact(name=clean_name, contact_type="customer", balance=0.0)
-    doc = new_contact.model_dump()
-    doc['created_at'] = doc['created_at'].isoformat()
-    doc['updated_at'] = doc['updated_at'].isoformat()
-    await db.contacts.insert_one(doc)
-    return new_contact.id
+# ==================== PRODUCT ENDPOINTS ====================
 
-@api_router.get("/")
-async def root(): 
-    return {"message": "System Operational"}
+@app.get("/api/products", response_model=List[Product])
+async def get_products():
+    """Get all products"""
+    products = await db.products.find().sort("name", 1).to_list(length=None)
+    return serialize_docs(products)
 
-# --- Products Routes ---
-@api_router.post("/products", response_model=Product)
-async def create_product(p: ProductCreate):
-    obj = Product(**p.model_dump())
-    doc = obj.model_dump()
-    doc['created_at'] = doc['created_at'].isoformat()
-    doc['updated_at'] = doc['updated_at'].isoformat()
-    await db.products.insert_one(doc)
-    return obj
+@app.get("/api/products/{product_id}", response_model=Product)
+async def get_product(product_id: str):
+    """Get a single product by ID"""
+    product = await db.products.find_one({"_id": ObjectId(product_id)})
+    if not product:
+        raise HTTPException(status_code=404, detail="المنتج غير موجود")
+    return serialize_doc(product)
 
-@api_router.get("/products", response_model=List[Product])
-async def get_products(low_stock: bool = False):
-    query = {"$expr": {"$lte": ["$quantity", "$min_quantity"]}} if low_stock else {}
-    items = await db.products.find(query, {"_id": 0}).to_list(1000)
-    for i in items: 
-        deserialize_datetime(i)
-    return items
-
-@api_router.put("/products/{id}", response_model=Product)
-async def update_product(id: str, update: ProductUpdate):
-    data = {k: v for k, v in update.model_dump().items() if v is not None}
-    if not data: 
-        raise HTTPException(400, "No data")
-    data['updated_at'] = datetime.now(timezone.utc).isoformat()
-    await db.products.update_one({"id": id}, {"$set": data})
-    p = await db.products.find_one({"id": id}, {"_id": 0})
-    return deserialize_datetime(p)
-
-@api_router.delete("/products/{id}")
-async def delete_product(id: str):
-    await db.products.delete_one({"id": id})
-    return {"msg": "Deleted"}
-
-# --- Contacts Routes ---
-@api_router.post("/contacts", response_model=Contact)
-async def create_contact(c: ContactCreate):
-    obj = Contact(**c.model_dump())
-    doc = obj.model_dump()
-    doc['created_at'] = doc['created_at'].isoformat()
-    doc['updated_at'] = doc['updated_at'].isoformat()
-    await db.contacts.insert_one(doc)
-    return obj
-
-@api_router.get("/contacts", response_model=List[Contact])
-async def get_contacts(contact_type: Optional[str] = None):
-    query = {"contact_type": contact_type} if contact_type else {}
-    items = await db.contacts.find(query, {"_id": 0}).to_list(1000)
-    for i in items: 
-        deserialize_datetime(i)
-    return items
-
-@api_router.put("/contacts/{id}", response_model=Contact)
-async def update_contact(id: str, update: ContactUpdate):
-    data = {k: v for k, v in update.model_dump().items() if v is not None}
-    data['updated_at'] = datetime.now(timezone.utc).isoformat()
-    await db.contacts.update_one({"id": id}, {"$set": data})
-    c = await db.contacts.find_one({"id": id}, {"_id": 0})
-    return deserialize_datetime(c)
-
-@api_router.delete("/contacts/{id}")
-async def delete_contact(id: str):
-    await db.contacts.delete_one({"id": id})
-    return {"msg": "Deleted"}
-
-# --- Invoices Routes ---
-@api_router.post("/invoices", response_model=Invoice)
-async def create_invoice(data: InvoiceCreate):
-    # 1. تحديد العميل
-    contact_id = data.contact_id
-    contact_name = ""
-    if data.new_contact_name and not contact_id:
-        contact_id = await get_or_create_contact(data.new_contact_name)
-        contact = await db.contacts.find_one({"id": contact_id})
-        contact_name = contact['name']
-    elif contact_id:
-        contact = await db.contacts.find_one({"id": contact_id})
-        contact_name = contact['name']
-
-    # 2. التحقق من توفر الكمية (للمبيعات فقط) - ✅ Feature 1: Now handles float quantities
-    if data.invoice_type == "sale":
-        for item in data.items:
-            prod_check = await db.products.find_one({"id": item.product_id})
-            if not prod_check:
-                raise HTTPException(404, f"المنتج غير موجود: {item.product_id}")
-            if prod_check['quantity'] < item.quantity:
-                raise HTTPException(400, f"عفواً، الكمية غير متوفرة للمنتج: {prod_check['name']}. المتوفر حالياً: {prod_check['quantity']}")
-
-    # 3. معالجة المنتجات وتحديث المخزون
-    items = []
-    subtotal = 0.0
-    for item in data.items:
-        prod = await db.products.find_one({"id": item.product_id})
-        if prod:
-            price = prod['sale_price'] if data.invoice_type == "sale" else prod['purchase_price']
-            total = price * item.quantity
-            items.append(InvoiceItemBase(
-                product_id=item.product_id, 
-                product_name=prod['name'], 
-                quantity=item.quantity,  # ✅ Feature 1: float quantity
-                unit_price=price, 
-                total=total
-            ))
-            subtotal += total
-            
-            # خصم/إضافة الكمية للمخزون - ✅ Feature 1: Now handles float quantities
-            qty_change = -item.quantity if data.invoice_type == "sale" else item.quantity
-            await db.products.update_one({"id": item.product_id}, {"$inc": {"quantity": qty_change}})
-
-    # 4. حفظ الفاتورة في قاعدة البيانات
-    inv_num = await get_next_invoice_number(data.invoice_type)
-    inv = Invoice(
-        invoice_type=data.invoice_type, 
-        contact_id=contact_id, 
-        contact_name=contact_name, 
-        invoice_number=inv_num, 
-        items=[i.model_dump() for i in items], 
-        subtotal=subtotal, 
-        total=subtotal, 
-        notes=data.notes,
-        status=data.status
-    )
-    doc = inv.model_dump()
-    doc['created_at'] = doc['created_at'].isoformat()
-    doc['updated_at'] = doc['updated_at'].isoformat()
-    await db.invoices.insert_one(doc)
-
-    # 5. المعالجة المالية
-    if data.status == "paid":
-        txn_type = "receipt" if data.invoice_type == "sale" else "payment"
-        await db.cash_transactions.insert_one({
-            "id": str(uuid.uuid4()), 
-            "transaction_type": txn_type, 
-            "amount": subtotal,
-            "description": f"Invoice {inv_num} (Instant Payment)", 
-            "contact_id": contact_id, 
-            "invoice_id": inv.id,
-            "created_at": datetime.now(timezone.utc).isoformat()
-        })
-    else:
-        bal_change = subtotal if data.invoice_type == "sale" else -subtotal
-        await db.contacts.update_one({"id": contact_id}, {"$inc": {"balance": bal_change}})
-
-    return inv
-
-@api_router.get("/invoices", response_model=List[Invoice])
-async def get_invoices(invoice_type: Optional[str] = None):
-    query = {"invoice_type": invoice_type} if invoice_type else {}
-    items = await db.invoices.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
-    for i in items: 
-        deserialize_datetime(i)
-    return items
-
-@api_router.put("/invoices/{id}")
-async def update_invoice(id: str, payload: Dict[str, Any]):
-    existing = await db.invoices.find_one({"id": id}, {"_id": 0})
-    if not existing: 
-        raise HTTPException(404, "Not found")
+@app.post("/api/products", response_model=Product)
+async def create_product(product: ProductCreate):
+    """Create a new product with synchronized stock"""
+    now = datetime.now()
     
-    if 'items' in payload:
-        for item in existing.get('items', []):
-            qty = item['quantity'] if existing['invoice_type'] == "sale" else -item['quantity']
-            await db.products.update_one({"id": item['product_id']}, {"$inc": {"quantity": qty}})
-        old_total = existing.get('total', 0)
-        bal_rev = -old_total if existing['invoice_type'] == "sale" else old_total
-        await db.contacts.update_one({"id": existing['contact_id']}, {"$inc": {"balance": bal_rev}})
+    # For dual unit products, ensure stock_weight consistency
+    stock_weight = product.stock_weight
+    if product.unit_type == UnitType.DUAL and product.weight_per_unit:
+        stock_weight = product.stock_count * product.weight_per_unit
     
-    update_dict = {}
-    if 'notes' in payload: 
-        update_dict['notes'] = payload['notes']
-    if 'status' in payload: 
-        update_dict['status'] = payload['status']
-    
-    contact_id = existing['contact_id']
-    if 'items' in payload:
-        new_items = []
-        subtotal = 0.0
-        inv_type = payload.get('invoice_type', existing['invoice_type'])
-        for item in payload['items']:
-            prod = await db.products.find_one({"id": item['product_id']})
-            if prod:
-                price = prod['sale_price'] if inv_type == "sale" else prod['purchase_price']
-                quantity = float(item['quantity'])  # ✅ Feature 1: Handle float quantity
-                total = price * quantity
-                new_items.append({
-                    "product_id": item['product_id'], 
-                    "product_name": prod['name'], 
-                    "quantity": quantity, 
-                    "unit_price": price, 
-                    "total": total
-                })
-                subtotal += total
-                qty_change = -quantity if inv_type == "sale" else quantity
-                await db.products.update_one({"id": item['product_id']}, {"$inc": {"quantity": qty_change}})
-        update_dict['items'] = new_items
-        update_dict['subtotal'] = subtotal
-        update_dict['total'] = subtotal
-        new_bal = subtotal if inv_type == "sale" else -subtotal
-        await db.contacts.update_one({"id": contact_id}, {"$inc": {"balance": new_bal}})
-    
-    update_dict['updated_at'] = datetime.now(timezone.utc).isoformat()
-    await db.invoices.update_one({"id": id}, {"$set": update_dict})
-    
-    new_status = update_dict.get('status', existing.get('status'))
-    old_status = existing.get('status')
-    if new_status == "paid" and old_status != "paid":
-        txn_type = "receipt" if existing['invoice_type'] == "sale" else "payment"
-        await db.cash_transactions.insert_one({
-            "id": str(uuid.uuid4()), 
-            "transaction_type": txn_type, 
-            "amount": update_dict.get('total', existing['total']),
-            "description": f"Invoice {existing['invoice_number']}", 
-            "contact_id": contact_id, 
-            "invoice_id": id,
-            "created_at": datetime.now(timezone.utc).isoformat()
-        })
-    elif new_status != "paid" and old_status == "paid":
-        await db.cash_transactions.delete_one({"invoice_id": id})
-    
-    return {"msg": "Updated"}
-
-@api_router.delete("/invoices/{id}")
-async def delete_invoice(id: str):
-    inv = await db.invoices.find_one({"id": id})
-    if not inv: 
-        raise HTTPException(404)
-    for item in inv.get('items', []):
-        qty = item['quantity'] if inv['invoice_type'] == "sale" else -item['quantity']
-        await db.products.update_one({"id": item['product_id']}, {"$inc": {"quantity": qty}})
-    bal_rev = -inv['total'] if inv['invoice_type'] == "sale" else inv['total']
-    await db.contacts.update_one({"id": inv['contact_id']}, {"$inc": {"balance": bal_rev}})
-    await db.cash_transactions.delete_one({"invoice_id": id})
-    await db.invoices.delete_one({"id": id})
-    return {"msg": "Deleted"}
-
-# --- Cash Transactions Routes ---
-@api_router.post("/transactions", response_model=CashTransaction)
-async def create_txn(txn: CashTransactionCreate):
-    contact_name = None
-    if txn.contact_id:
-        c = await db.contacts.find_one({"id": txn.contact_id})
-        if c:
-            contact_name = c['name']
-            change = -txn.amount if txn.transaction_type == "receipt" else txn.amount
-            await db.contacts.update_one({"id": txn.contact_id}, {"$inc": {"balance": change}})
-    data = txn.model_dump()
-    data['contact_name'] = contact_name
-    obj = CashTransaction(**data)
-    doc = obj.model_dump()
-    doc['created_at'] = doc['created_at'].isoformat()
-    await db.cash_transactions.insert_one(doc)
-    return obj
-
-@api_router.get("/transactions", response_model=List[CashTransaction])
-async def get_txns(transaction_type: Optional[str] = None):
-    query = {"transaction_type": transaction_type} if transaction_type else {}
-    items = await db.cash_transactions.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
-    for i in items: 
-        deserialize_datetime(i)
-    return items
-
-@api_router.put("/transactions/{id}", response_model=CashTransaction)
-async def update_txn(id: str, update: CashTransactionUpdate):
-    old = await db.cash_transactions.find_one({"id": id}, {"_id": 0})
-    if not old: 
-        raise HTTPException(404, "Not found")
-    data = {k: v for k, v in update.model_dump().items() if v is not None}
-    if old.get('contact_id'):
-        rev = old['amount'] if old['transaction_type'] == "receipt" else -old['amount']
-        await db.contacts.update_one({"id": old['contact_id']}, {"$inc": {"balance": rev}})
-    await db.cash_transactions.update_one({"id": id}, {"$set": data})
-    new_txn = await db.cash_transactions.find_one({"id": id}, {"_id": 0})
-    if new_txn.get('contact_id'):
-        change = -new_txn['amount'] if new_txn['transaction_type'] == "receipt" else new_txn['amount']
-        await db.contacts.update_one({"id": new_txn['contact_id']}, {"$inc": {"balance": change}})
-        c = await db.contacts.find_one({"id": new_txn['contact_id']})
-        if c: 
-            await db.cash_transactions.update_one({"id": id}, {"$set": {"contact_name": c['name']}})
-    return deserialize_datetime(new_txn)
-
-@api_router.delete("/transactions/{id}")
-async def delete_txn(id: str):
-    txn = await db.cash_transactions.find_one({"id": id})
-    if txn and txn.get('contact_id'):
-        rev = txn['amount'] if txn['transaction_type'] == "receipt" else -txn['amount']
-        await db.contacts.update_one({"id": txn['contact_id']}, {"$inc": {"balance": rev}})
-    await db.cash_transactions.delete_one({"id": id})
-    return {"msg": "Deleted"}
-
-@api_router.get("/transactions/balance")
-async def get_balance():
-    pipeline = [{"$group": {"_id": "$transaction_type", "total": {"$sum": "$amount"}}}]
-    res = await db.cash_transactions.aggregate(pipeline).to_list(10)
-    receipts = next((r['total'] for r in res if r['_id'] == 'receipt'), 0)
-    payments = next((r['total'] for r in res if r['_id'] == 'payment'), 0)
-    expenses = next((r['total'] for r in res if r['_id'] == 'expense'), 0)  # ✅ Include expenses
-    return {"receipts": receipts, "payments": payments, "expenses": expenses, "balance": receipts - payments - expenses}
-
-# ✅ Feature 4: Expenses Routes
-@api_router.post("/expenses")
-async def create_expense(data: ExpenseCreate):
-    """Create a new expense and automatically add to cash transactions"""
-    # 1. Save expense to expenses collection
-    expense = Expense(
-        name=data.name,
-        amount=data.amount,
-        notes=data.notes
-    )
-    doc = expense.model_dump()
-    doc['created_at'] = doc['created_at'].isoformat()
-    await db.expenses.insert_one(doc)
-    
-    # 2. CRITICAL: Insert into cash_transactions to update cash balance
-    txn_doc = {
-        "id": str(uuid.uuid4()),
-        "transaction_type": "expense",
-        "amount": data.amount,
-        "description": f"مصروف: {data.name}" + (f" - {data.notes}" if data.notes else ""),
-        "contact_id": None,
-        "contact_name": None,
-        "invoice_id": None,
-        "expense_id": expense.id,
-        "created_at": datetime.now(timezone.utc).isoformat()
+    product_data = {
+        **product.model_dump(),
+        "stock_weight": stock_weight,
+        "created_at": now,
+        "updated_at": now
     }
-    await db.cash_transactions.insert_one(txn_doc)
     
-    return {"msg": "Expense created", "expense_id": expense.id}
+    result = await db.products.insert_one(product_data)
+    created = await db.products.find_one({"_id": result.inserted_id})
+    return serialize_doc(created)
 
-@api_router.get("/expenses")
-async def get_expenses(start_date: Optional[str] = None, end_date: Optional[str] = None):
+@app.put("/api/products/{product_id}", response_model=Product)
+async def update_product(product_id: str, product: ProductUpdate):
+    """Update a product with synchronized stock"""
+    existing = await db.products.find_one({"_id": ObjectId(product_id)})
+    if not existing:
+        raise HTTPException(status_code=404, detail="المنتج غير موجود")
+    
+    update_data = {k: v for k, v in product.model_dump().items() if v is not None}
+    update_data["updated_at"] = datetime.now()
+    
+    # For dual unit products, maintain stock_weight consistency
+    if existing.get("unit_type") == UnitType.DUAL or update_data.get("unit_type") == UnitType.DUAL:
+        weight_per_unit = update_data.get("weight_per_unit", existing.get("weight_per_unit"))
+        stock_count = update_data.get("stock_count", existing.get("stock_count", 0))
+        if weight_per_unit:
+            update_data["stock_weight"] = stock_count * weight_per_unit
+    
+    await db.products.update_one(
+        {"_id": ObjectId(product_id)},
+        {"$set": update_data}
+    )
+    
+    updated = await db.products.find_one({"_id": ObjectId(product_id)})
+    return serialize_doc(updated)
+
+@app.delete("/api/products/{product_id}")
+async def delete_product(product_id: str):
+    """Delete a product"""
+    result = await db.products.delete_one({"_id": ObjectId(product_id)})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="المنتج غير موجود")
+    return {"message": "تم حذف المنتج بنجاح"}
+
+# ==================== INVOICE ENDPOINTS ====================
+
+@app.get("/api/invoices", response_model=List[Invoice])
+async def get_invoices(
+    customer_id: Optional[str] = None,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None
+):
+    """Get all invoices with optional filtering"""
+    query = {}
+    if customer_id:
+        query["customer_id"] = customer_id
+    if start_date and end_date:
+        query["date"] = {"$gte": start_date, "$lte": end_date}
+    
+    invoices = await db.invoices.find(query).sort("date", -1).to_list(length=None)
+    return serialize_docs(invoices)
+
+@app.get("/api/invoices/{invoice_id}", response_model=Invoice)
+async def get_invoice(invoice_id: str):
+    """Get a single invoice by ID"""
+    invoice = await db.invoices.find_one({"_id": ObjectId(invoice_id)})
+    if not invoice:
+        raise HTTPException(status_code=404, detail="الفاتورة غير موجودة")
+    return serialize_doc(invoice)
+
+@app.post("/api/invoices", response_model=Invoice)
+async def create_invoice(invoice: InvoiceCreate):
+    """Create a new invoice with STRICT dual unit stock validation"""
+    
+    # Validate and update stock for each item
+    for item in invoice.items:
+        product = await db.products.find_one({"_id": ObjectId(item.product_id)})
+        if not product:
+            raise HTTPException(status_code=404, detail=f"المنتج غير موجود: {item.product_id}")
+        
+        # Set product name and weight_per_unit snapshot
+        item.product_name = product["name"]
+        item.weight_per_unit = product.get("weight_per_unit")
+        
+        if product.get("unit_type") == UnitType.DUAL:
+            weight_per_unit = product.get("weight_per_unit", 1)
+            
+            if item.sale_unit == SaleUnit.COUNT:
+                # Selling by count: validate stock_count
+                if product.get("stock_count", 0) < item.quantity:
+                    available = product.get("stock_count", 0)
+                    raise HTTPException(
+                        status_code=400, 
+                        detail=f"الكمية غير متوفرة! المتاح: {available} كيس"
+                    )
+                
+                # Deduct from stock_count and stock_weight
+                deduct_count = item.quantity
+                deduct_weight = item.quantity * weight_per_unit
+                
+                # Additional validation for weight
+                if product.get("stock_weight", 0) < deduct_weight:
+                    available_weight = product.get("stock_weight", 0)
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"الوزن غير متوفر! المتاح: {available_weight} كغ"
+                    )
+                
+                new_stock_count = product.get("stock_count", 0) - deduct_count
+                new_stock_weight = product.get("stock_weight", 0) - deduct_weight
+                
+            else:  # SaleUnit.WEIGHT
+                # Selling by weight: validate stock_weight
+                if product.get("stock_weight", 0) < item.quantity:
+                    available_weight = product.get("stock_weight", 0)
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"الوزن غير متوفر! المتاح: {available_weight} كغ"
+                    )
+                
+                # Deduct from stock_weight and recalculate stock_count
+                deduct_weight = item.quantity
+                deduct_count = item.quantity / weight_per_unit
+                
+                new_stock_weight = product.get("stock_weight", 0) - deduct_weight
+                new_stock_count = new_stock_weight / weight_per_unit
+            
+            # Apply stock update
+            await db.products.update_one(
+                {"_id": ObjectId(item.product_id)},
+                {
+                    "$set": {
+                        "stock_count": new_stock_count,
+                        "stock_weight": new_stock_weight,
+                        "updated_at": datetime.now()
+                    }
+                }
+            )
+            
+        else:
+            # Simple unit product - validate stock_count
+            if product.get("stock_count", 0) < item.quantity:
+                available = product.get("stock_count", 0)
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"الكمية غير متوفرة! المتاح: {available}"
+                )
+            
+            new_stock_count = product.get("stock_count", 0) - item.quantity
+            await db.products.update_one(
+                {"_id": ObjectId(item.product_id)},
+                {
+                    "$set": {
+                        "stock_count": new_stock_count,
+                        "updated_at": datetime.now()
+                    }
+                }
+            )
+    
+    # Create invoice
+    invoice_data = {
+        **invoice.model_dump(),
+        "created_at": datetime.now()
+    }
+    
+    result = await db.invoices.insert_one(invoice_data)
+    created = await db.invoices.find_one({"_id": result.inserted_id})
+    
+    # Update customer balance and last transaction date
+    await db.clients.update_one(
+        {"_id": ObjectId(invoice.customer_id)},
+        {
+            "$inc": {"balance": invoice.total},
+            "$set": {"last_transaction_date": datetime.now()}
+        }
+    )
+    
+    return serialize_doc(created)
+
+@app.delete("/api/invoices/{invoice_id}")
+async def delete_invoice(invoice_id: str):
+    """Delete an invoice and restore stock"""
+    invoice = await db.invoices.find_one({"_id": ObjectId(invoice_id)})
+    if not invoice:
+        raise HTTPException(status_code=404, detail="الفاتورة غير موجودة")
+    
+    # Restore stock for each item
+    for item in invoice.get("items", []):
+        product = await db.products.find_one({"_id": ObjectId(item["product_id"])})
+        if product and product.get("unit_type") == UnitType.DUAL:
+            weight_per_unit = item.get("weight_per_unit", product.get("weight_per_unit", 1))
+            
+            if item.get("sale_unit") == SaleUnit.COUNT:
+                restore_count = item["quantity"]
+                restore_weight = item["quantity"] * weight_per_unit
+            else:
+                restore_weight = item["quantity"]
+                restore_count = item["quantity"] / weight_per_unit
+            
+            await db.products.update_one(
+                {"_id": ObjectId(item["product_id"])},
+                {
+                    "$inc": {
+                        "stock_count": restore_count,
+                        "stock_weight": restore_weight
+                    },
+                    "$set": {"updated_at": datetime.now()}
+                }
+            )
+        else:
+            await db.products.update_one(
+                {"_id": ObjectId(item["product_id"])},
+                {
+                    "$inc": {"stock_count": item["quantity"]},
+                    "$set": {"updated_at": datetime.now()}
+                }
+            )
+    
+    # Restore customer balance
+    await db.clients.update_one(
+        {"_id": ObjectId(invoice["customer_id"])},
+        {"$inc": {"balance": -invoice["total"]}}
+    )
+    
+    await db.invoices.delete_one({"_id": ObjectId(invoice_id)})
+    return {"message": "تم حذف الفاتورة بنجاح"}
+
+# ==================== CLIENT ENDPOINTS ====================
+
+@app.get("/api/clients", response_model=List[Client])
+async def get_clients():
+    """Get all clients"""
+    clients = await db.clients.find().sort("name", 1).to_list(length=None)
+    return serialize_docs(clients)
+
+@app.get("/api/clients/{client_id}", response_model=Client)
+async def get_client(client_id: str):
+    """Get a single client by ID"""
+    client = await db.clients.find_one({"_id": ObjectId(client_id)})
+    if not client:
+        raise HTTPException(status_code=404, detail="العميل غير موجود")
+    return serialize_doc(client)
+
+@app.post("/api/clients", response_model=Client)
+async def create_client(client: ClientCreate):
+    """Create a new client"""
+    client_data = {
+        **client.model_dump(),
+        "created_at": datetime.now(),
+        "last_transaction_date": None
+    }
+    result = await db.clients.insert_one(client_data)
+    created = await db.clients.find_one({"_id": result.inserted_id})
+    return serialize_doc(created)
+
+@app.put("/api/clients/{client_id}", response_model=Client)
+async def update_client(client_id: str, client: ClientUpdate):
+    """Update a client"""
+    update_data = {k: v for k, v in client.model_dump().items() if v is not None}
+    
+    result = await db.clients.update_one(
+        {"_id": ObjectId(client_id)},
+        {"$set": update_data}
+    )
+    
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="العميل غير موجود")
+    
+    updated = await db.clients.find_one({"_id": ObjectId(client_id)})
+    return serialize_doc(updated)
+
+@app.delete("/api/clients/{client_id}")
+async def delete_client(client_id: str):
+    """Delete a client"""
+    result = await db.clients.delete_one({"_id": ObjectId(client_id)})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="العميل غير موجود")
+    return {"message": "تم حذف العميل بنجاح"}
+
+# ==================== EXPENSE ENDPOINTS ====================
+
+@app.get("/api/expenses", response_model=List[Expense])
+async def get_expenses(
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None
+):
     """Get all expenses with optional date filtering"""
     query = {}
-    if start_date or end_date:
-        query["created_at"] = {}
-        if start_date:
-            query["created_at"]["$gte"] = start_date
-        if end_date:
-            query["created_at"]["$lte"] = end_date
+    if start_date and end_date:
+        query["date"] = {"$gte": start_date, "$lte": end_date}
     
-    items = await db.expenses.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
-    for i in items: 
-        deserialize_datetime(i)
-    return items
+    expenses = await db.expenses.find(query).sort("date", -1).to_list(length=None)
+    return serialize_docs(expenses)
 
-@api_router.delete("/expenses/{id}")
-async def delete_expense(id: str):
-    """Delete expense and its associated cash transaction"""
-    await db.expenses.delete_one({"id": id})
-    await db.cash_transactions.delete_one({"expense_id": id})
-    return {"msg": "Deleted"}
-
-# --- Reports Routes ---
-@api_router.get("/reports/profit-loss")
-async def get_profit_loss_report(start_date: Optional[str] = None, end_date: Optional[str] = None):
-    query = {}
-    if start_date: 
-        query["created_at"] = {"$gte": start_date}
-    if end_date:
-        if "created_at" in query: 
-            query["created_at"]["$lte"] = end_date
-        else: 
-            query["created_at"] = {"$lte": end_date}
-    
-    # 1. حساب المبيعات
-    sales_pipeline = [{"$match": {**query, "invoice_type": "sale"}}, {"$group": {"_id": None, "total": {"$sum": "$total"}}}]
-    sales_res = await db.invoices.aggregate(sales_pipeline).to_list(1)
-    sales_total = sales_res[0]['total'] if sales_res else 0.0
-    
-    # 2. حساب المشتريات
-    pur_pipeline = [{"$match": {**query, "invoice_type": "purchase"}}, {"$group": {"_id": None, "total": {"$sum": "$total"}}}]
-    pur_res = await db.invoices.aggregate(pur_pipeline).to_list(1)
-    pur_total = pur_res[0]['total'] if pur_res else 0.0
-    
-    # 3. حساب المصروفات
-    expense_pipeline = [{"$match": query}, {"$group": {"_id": None, "total": {"$sum": "$amount"}}}]
-    expense_res = await db.expenses.aggregate(expense_pipeline).to_list(1)
-    expenses_total = expense_res[0]['total'] if expense_res else 0.0
-    
-    # 4. النتائج
-    gross_profit = sales_total - pur_total - expenses_total
-    profit_margin = (gross_profit / sales_total * 100) if sales_total > 0 else 0.0
-
-    return {
-        "sales_total": sales_total, 
-        "purchases_total": pur_total,
-        "expenses_total": expenses_total,
-        "gross_profit": gross_profit,
-        "profit_margin": profit_margin
+@app.post("/api/expenses", response_model=Expense)
+async def create_expense(expense: ExpenseCreate):
+    """Create a new expense/cash transaction"""
+    expense_data = {
+        **expense.model_dump(),
+        "created_at": datetime.now()
     }
+    result = await db.expenses.insert_one(expense_data)
+    created = await db.expenses.find_one({"_id": result.inserted_id})
+    return serialize_doc(created)
 
-@api_router.get("/reports/dashboard")
-async def dashboard():
-    # 1. عداد المنتجات والنواقص
-    prod_count = await db.products.count_documents({})
-    low_stock = await db.products.count_documents({"$expr": {"$lte": ["$quantity", "$min_quantity"]}})
-    
-    # 2. عداد العملاء
-    customers_count = await db.contacts.count_documents({"contact_type": "customer"})
+@app.delete("/api/expenses/{expense_id}")
+async def delete_expense(expense_id: str):
+    """Delete an expense"""
+    result = await db.expenses.delete_one({"_id": ObjectId(expense_id)})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="المعاملة غير موجودة")
+    return {"message": "تم حذف المعاملة بنجاح"}
 
-    # 3. حساب إجمالي المبيعات
-    sales_pipeline = [
-        {"$match": {"invoice_type": "sale"}},
-        {"$group": {"_id": None, "total": {"$sum": "$total"}}}
-    ]
-    sales_res = await db.invoices.aggregate(sales_pipeline).to_list(1)
-    total_sales = sales_res[0]['total'] if sales_res else 0.0
+# ==================== REPORTS ENDPOINTS ====================
 
-    # 4. حساب إجمالي المشتريات
-    pur_pipeline = [
-        {"$match": {"invoice_type": "purchase"}},
-        {"$group": {"_id": None, "total": {"$sum": "$total"}}}
-    ]
-    pur_res = await db.invoices.aggregate(pur_pipeline).to_list(1)
-    total_purchases = pur_res[0]['total'] if pur_res else 0.0
-
-    # 5. حساب رصيد الصندوق (يشمل المصروفات الآن)
-    balance_pipeline = [
-        {"$group": {
-            "_id": "$transaction_type",
-            "total": {"$sum": "$amount"}
-        }}
-    ]
-    bal_res = await db.cash_transactions.aggregate(balance_pipeline).to_list(10)
-    receipts = next((item['total'] for item in bal_res if item['_id'] == 'receipt'), 0.0)
-    payments = next((item['total'] for item in bal_res if item['_id'] == 'payment'), 0.0)
-    expenses = next((item['total'] for item in bal_res if item['_id'] == 'expense'), 0.0)
-    cash_balance = receipts - payments - expenses
-
-    # 6. جلب أحدث 5 فواتير
-    recent_invoices = await db.invoices.find({}, {"_id": 0})\
-        .sort("created_at", -1)\
-        .limit(5)\
-        .to_list(5)
-
-    return {
-        "products_count": prod_count,
-        "low_stock_count": low_stock,
-        "customers_count": customers_count,
-        "total_sales": total_sales,
-        "total_purchases": total_purchases,
-        "cash_balance": cash_balance,
-        "recent_invoices": recent_invoices
-    }
-
-# ✅ Feature 2: Updated Account Statement with Date Filtering
-@api_router.get("/reports/account-statement/{contact_id}")
+@app.get("/api/reports/account-statement/{client_id}")
 async def get_account_statement(
-    contact_id: str, 
-    start_date: Optional[str] = None,  # Format: YYYY-MM-DD
-    end_date: Optional[str] = None     # Format: YYYY-MM-DD
+    client_id: str,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None
 ):
-    # 1. جلب بيانات العميل
-    contact = await db.contacts.find_one({"id": contact_id}, {"_id": 0})
-    if not contact: 
-        raise HTTPException(404, "جهة الاتصال غير موجودة")
+    """Get account statement for a client with full invoice items"""
+    client = await db.clients.find_one({"_id": ObjectId(client_id)})
+    if not client:
+        raise HTTPException(status_code=404, detail="العميل غير موجود")
     
-    # 2. بناء استعلام الفواتير مع التاريخ
-    invoice_query = {"contact_id": contact_id}
-    if start_date or end_date:
-        invoice_query["created_at"] = {}
-        if start_date:
-            invoice_query["created_at"]["$gte"] = f"{start_date}T00:00:00"
-        if end_date:
-            invoice_query["created_at"]["$lte"] = f"{end_date}T23:59:59"
+    query = {"customer_id": client_id}
+    if start_date and end_date:
+        query["date"] = {"$gte": start_date, "$lte": end_date}
     
-    # 3. جلب الفواتير المرتبطة به
-    invoices = await db.invoices.find(invoice_query, {"_id": 0}).sort("created_at", -1).to_list(1000)
-    
-    # 4. بناء استعلام المعاملات مع التاريخ
-    txn_query = {"contact_id": contact_id}
-    if start_date or end_date:
-        txn_query["created_at"] = {}
-        if start_date:
-            txn_query["created_at"]["$gte"] = f"{start_date}T00:00:00"
-        if end_date:
-            txn_query["created_at"]["$lte"] = f"{end_date}T23:59:59"
-    
-    # 5. جلب الدفعات المالية المرتبطة به
-    txns = await db.cash_transactions.find(txn_query, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    invoices = await db.invoices.find(query).sort("date", -1).to_list(length=None)
     
     return {
-        "contact": contact, 
-        "invoices": invoices, 
-        "transactions": txns, 
-        "current_balance": contact.get('balance', 0.0),
-        "filter": {
-            "start_date": start_date,
-            "end_date": end_date
-        }
+        "client": serialize_doc(client),
+        "invoices": serialize_docs(invoices)
     }
 
-# ✅ Feature 3: Updated Inventory Report with Date Filtering
-@api_router.get("/reports/inventory")
+@app.get("/api/reports/inventory")
 async def get_inventory_report(
-    start_date: Optional[str] = None,  # Format: YYYY-MM-DD
-    end_date: Optional[str] = None     # Format: YYYY-MM-DD
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None
 ):
-    # بناء الاستعلام مع التاريخ
+    """Get inventory report with optional date filtering"""
     query = {}
-    if start_date or end_date:
-        query["created_at"] = {}
-        if start_date:
-            query["created_at"]["$gte"] = f"{start_date}T00:00:00"
-        if end_date:
-            query["created_at"]["$lte"] = f"{end_date}T23:59:59"
     
-    products = await db.products.find(query, {"_id": 0}).to_list(1000)
-    total_val = 0.0
-    low_stock = []
+    # If dates provided, filter products created or updated within range
+    if start_date and end_date:
+        query["$or"] = [
+            {"created_at": {"$gte": start_date, "$lte": end_date}},
+            {"updated_at": {"$gte": start_date, "$lte": end_date}}
+        ]
+    
+    products = await db.products.find(query).sort("name", 1).to_list(length=None)
+    
+    # Calculate total values
+    total_value_cost = 0
+    total_value_price = 0
     
     for p in products:
-        qty = p.get('quantity', 0)
-        price = p.get('purchase_price', 0)
-        min_qty = p.get('min_quantity', 10)
-        
-        val = qty * price
-        total_val += val
-        p['stock_value'] = val
-        
-        if qty <= min_qty: 
-            low_stock.append(p)
-            
+        if p.get("unit_type") == UnitType.DUAL:
+            total_value_cost += p.get("stock_count", 0) * p.get("cost", 0)
+            total_value_price += p.get("stock_count", 0) * p.get("price", 0)
+        else:
+            total_value_cost += p.get("stock_count", 0) * p.get("cost", 0)
+            total_value_price += p.get("stock_count", 0) * p.get("price", 0)
+    
     return {
-        "products": products, 
-        "total_items": len(products), 
-        "total_value": total_val, 
-        "low_stock_count": len(low_stock), 
-        "low_stock_items": low_stock,
-        "filter": {
-            "start_date": start_date,
-            "end_date": end_date
+        "products": serialize_docs(products),
+        "summary": {
+            "total_products": len(products),
+            "total_value_cost": total_value_cost,
+            "total_value_price": total_value_price
         }
     }
 
-# ✅ دالة النسخ الاحتياطي
-@api_router.get("/system/backup/excel")
+@app.get("/api/reports/financial")
+async def get_financial_report(
+    start_date: datetime,
+    end_date: datetime
+):
+    """Get financial report for a date range"""
+    
+    # Get invoices in range
+    invoices = await db.invoices.find({
+        "date": {"$gte": start_date, "$lte": end_date}
+    }).to_list(length=None)
+    
+    # Get expenses in range
+    expenses = await db.expenses.find({
+        "date": {"$gte": start_date, "$lte": end_date}
+    }).to_list(length=None)
+    
+    total_sales = sum(inv.get("total", 0) for inv in invoices)
+    total_expenses = sum(exp.get("amount", 0) for exp in expenses if exp.get("type") == TransactionType.EXPENSE)
+    total_income = sum(exp.get("amount", 0) for exp in expenses if exp.get("type") == TransactionType.INCOME)
+    
+    return {
+        "total_sales": total_sales,
+        "total_expenses": total_expenses,
+        "total_income": total_income,
+        "net_profit": total_sales - total_expenses + total_income,
+        "invoices_count": len(invoices),
+        "expenses_count": len(expenses)
+    }
+
+# ==================== BACKUP ENDPOINT ====================
+
+@app.get("/api/backup/excel")
 async def backup_excel():
-    global window
+    """Generate comprehensive Excel backup with all data"""
     
-    # 1. جلب البيانات
-    prods = await db.products.find({}, {"_id": 0, "id": 0, "created_at": 0, "updated_at": 0}).to_list(10000)
-    contacts = await db.contacts.find({}, {"_id": 0, "id": 0, "created_at": 0, "updated_at": 0}).to_list(10000)
-    invoices = await db.invoices.find({}, {"_id": 0, "id": 0, "updated_at": 0}).to_list(10000)
-    txns = await db.cash_transactions.find({}, {"_id": 0, "id": 0}).to_list(10000)
-    expenses = await db.expenses.find({}, {"_id": 0, "id": 0}).to_list(10000)  # ✅ Include expenses
+    # Create Excel writer
+    output = BytesIO()
+    writer = pd.ExcelWriter(output, engine='openpyxl')
     
-    # 2. تحويل إلى DataFrames
-    df_p = pd.DataFrame(prods)
-    df_c = pd.DataFrame(contacts)
-    df_i = pd.DataFrame(invoices)
-    df_t = pd.DataFrame(txns)
-    df_e = pd.DataFrame(expenses)  # ✅ Expenses dataframe
+    # ==================== Sheet 1: Products ====================
+    products = await db.products.find().to_list(length=None)
+    if products:
+        products_data = []
+        for p in products:
+            is_dual = p.get("unit_type") == UnitType.DUAL
+            products_data.append({
+                "اسم المنتج": p.get("name", ""),
+                "سعر التكلفة": p.get("cost", 0),
+                "سعر البيع": p.get("price", 0),
+                "نوع الوحدة": "ثنائية" if is_dual else "بسيطة",
+                "الوزن لكل وحدة": p.get("weight_per_unit", "-") if is_dual else "-",
+                "الكمية (عدد)": p.get("stock_count", 0),
+                "الكمية (وزن كغ)": p.get("stock_weight", 0) if is_dual else "-",
+                "القيمة الإجمالية": p.get("stock_count", 0) * p.get("price", 0)
+            })
+        
+        df_products = pd.DataFrame(products_data)
+        df_products.to_excel(writer, sheet_name='المنتجات', index=False)
+        
+        # Auto-adjust column widths
+        worksheet = writer.sheets['المنتجات']
+        for column in worksheet.columns:
+            max_length = 0
+            column_letter = column[0].column_letter
+            for cell in column:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = min(max_length + 2, 50)
+            worksheet.column_dimensions[column_letter].width = adjusted_width
     
-    # 3. تغيير أسماء الأعمدة إلى العربية
-    if not df_p.empty:
-        df_p.rename(columns={
-            "name": "اسم المنتج",
-            "purchase_price": "سعر الشراء",
-            "sale_price": "سعر البيع",
-            "quantity": "الكمية",
-            "min_quantity": "الحد الأدنى",
-            "description": "الوصف"
-        }, inplace=True)
-
-    if not df_c.empty:
-        df_c.rename(columns={
-            "name": "الاسم",
-            "contact_type": "النوع",
-            "phone": "الهاتف",
-            "email": "الإيميل",
-            "address": "العنوان",
-            "balance": "الرصيد"
-        }, inplace=True)
-        df_c['النوع'] = df_c['النوع'].replace({'customer': 'عميل', 'supplier': 'مورد'})
-
-    if not df_i.empty:
-        df_i.rename(columns={
-            "invoice_number": "رقم الفاتورة",
-            "contact_name": "الاسم",
-            "total": "الإجمالي",
-            "invoice_type": "نوع الفاتورة",
-            "status": "الحالة",
-            "created_at": "التاريخ"
-        }, inplace=True)
-        if 'items' in df_i.columns:
-            df_i['items'] = df_i['items'].apply(lambda x: str(x))
+    # ==================== Sheet 2: Clients ====================
+    clients = await db.clients.find().to_list(length=None)
+    if clients:
+        clients_data = []
+        for c in clients:
+            last_trans = c.get("last_transaction_date")
+            clients_data.append({
+                "اسم العميل": c.get("name", ""),
+                "رقم الهاتف": c.get("phone", ""),
+                "الرصيد": c.get("balance", 0),
+                "آخر معاملة": last_trans.strftime("%Y-%m-%d") if last_trans else "-"
+            })
+        
+        df_clients = pd.DataFrame(clients_data)
+        df_clients.to_excel(writer, sheet_name='العملاء', index=False)
+        
+        worksheet = writer.sheets['العملاء']
+        for column in worksheet.columns:
+            max_length = 0
+            column_letter = column[0].column_letter
+            for cell in column:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = min(max_length + 2, 50)
+            worksheet.column_dimensions[column_letter].width = adjusted_width
     
-    # ✅ Expenses sheet
-    if not df_e.empty:
-        df_e.rename(columns={
-            "name": "اسم المصروف",
-            "amount": "المبلغ",
-            "notes": "ملاحظات",
-            "created_at": "التاريخ"
-        }, inplace=True)
-
-    suggested_name = f"AlMoheet_Backup_{datetime.now().strftime('%Y-%m-%d')}.xlsx"
-    save_path = window.create_file_dialog(
-        webview.SAVE_DIALOG, directory='', save_filename=suggested_name,
-        file_types=('Excel Files (*.xlsx)', 'All files (*.*)')
+    # ==================== Sheet 3: Invoices Detailed ====================
+    invoices = await db.invoices.find().to_list(length=None)
+    if invoices:
+        invoices_data = []
+        for inv in invoices:
+            inv_date = inv.get("date")
+            if isinstance(inv_date, datetime):
+                date_str = inv_date.strftime("%Y-%m-%d %H:%M")
+            else:
+                date_str = str(inv_date)
+            
+            for item in inv.get("items", []):
+                invoices_data.append({
+                    "رقم الفاتورة": inv.get("invoice_number", ""),
+                    "التاريخ": date_str,
+                    "العميل": inv.get("customer_name", ""),
+                    "اسم المنتج": item.get("product_name", ""),
+                    "الكمية": item.get("quantity", 0),
+                    "وحدة البيع": "عدد" if item.get("sale_unit") == SaleUnit.COUNT else "وزن",
+                    "سعر الوحدة": item.get("unit_price", 0),
+                    "الإجمالي": item.get("total", 0)
+                })
+        
+        df_invoices = pd.DataFrame(invoices_data)
+        df_invoices.to_excel(writer, sheet_name='الفواتير تفصيلي', index=False)
+        
+        worksheet = writer.sheets['الفواتير تفصيلي']
+        for column in worksheet.columns:
+            max_length = 0
+            column_letter = column[0].column_letter
+            for cell in column:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = min(max_length + 2, 50)
+            worksheet.column_dimensions[column_letter].width = adjusted_width
+    
+    # ==================== Sheet 4: Expenses/Cash ====================
+    expenses = await db.expenses.find().to_list(length=None)
+    if expenses:
+        expenses_data = []
+        for e in expenses:
+            exp_date = e.get("date")
+            if isinstance(exp_date, datetime):
+                date_str = exp_date.strftime("%Y-%m-%d")
+            else:
+                date_str = str(exp_date)
+            
+            expenses_data.append({
+                "التاريخ": date_str,
+                "النوع": "إيراد" if e.get("type") == TransactionType.INCOME else "مصروف",
+                "المبلغ": e.get("amount", 0),
+                "ملاحظات": e.get("note", "")
+            })
+        
+        df_expenses = pd.DataFrame(expenses_data)
+        df_expenses.to_excel(writer, sheet_name='المصروفات والنقدية', index=False)
+        
+        worksheet = writer.sheets['المصروفات والنقدية']
+        for column in worksheet.columns:
+            max_length = 0
+            column_letter = column[0].column_letter
+            for cell in column:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = min(max_length + 2, 50)
+            worksheet.column_dimensions[column_letter].width = adjusted_width
+    
+    writer.close()
+    output.seek(0)
+    
+    filename = f"ALMoheat_Backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
-    
-    if not save_path: 
-        raise HTTPException(400, "Cancelled")
-    if isinstance(save_path, (list, tuple)): 
-        save_path = save_path[0]
-    
-    try:
-        with pd.ExcelWriter(save_path, engine='openpyxl') as writer:
-            if not df_p.empty: df_p.to_excel(writer, sheet_name='المنتجات', index=False)
-            if not df_c.empty: df_c.to_excel(writer, sheet_name='العملاء والموردين', index=False)
-            if not df_i.empty: df_i.to_excel(writer, sheet_name='الفواتير', index=False)
-            if not df_t.empty: df_t.to_excel(writer, sheet_name='الصندوق', index=False)
-            if not df_e.empty: df_e.to_excel(writer, sheet_name='المصروفات', index=False)  # ✅ New sheet
-        return {"message": "Success", "path": save_path}
-    except Exception as e:
-        raise HTTPException(500, str(e))
-    
-app.include_router(api_router)
 
-# ---------------------------------------------------------
-# 2. تشغيل الواجهة
-# ---------------------------------------------------------
-frontend_dist_path = os.path.join(ROOT_DIR, "frontend", "build")
-if getattr(sys, 'frozen', False):
-    frontend_dist_path = os.path.join(sys._MEIPASS, "frontend", "build")
+# ==================== HEALTH CHECK ====================
 
-if os.path.exists(frontend_dist_path):
-    static_folder = os.path.join(frontend_dist_path, "static")
-    if os.path.exists(static_folder):
-        try: 
-            app.mount("/static", StaticFiles(directory=static_folder), name="static")
-        except: 
-            pass
-    assets_folder = os.path.join(frontend_dist_path, "assets")
-    if os.path.exists(assets_folder):
-        try: 
-            app.mount("/assets", StaticFiles(directory=assets_folder), name="assets")
-        except: 
-            pass
+@app.get("/api/health")
+async def health_check():
+    """Health check endpoint"""
+    return {"status": "healthy", "timestamp": datetime.now()}
 
-    @app.get("/{full_path:path}")
-    async def serve_react_app(full_path: str):
-        if full_path.startswith("api"): 
-            raise HTTPException(404)
-        possible_file = os.path.join(frontend_dist_path, full_path)
-        if os.path.exists(possible_file) and os.path.isfile(possible_file):
-            return FileResponse(possible_file)
-        return FileResponse(os.path.join(frontend_dist_path, "index.html"))
+# ==================== MAIN ====================
 
 if __name__ == "__main__":
-    def start_server():
-        uvicorn.run(app, host="127.0.0.1", port=8000, log_level="error")
-
-    t = threading.Thread(target=start_server)
-    t.daemon = True
-    t.start()
-    time.sleep(1)
-
-    window = webview.create_window(
-        title="المُحيط - نظام المحاسبة",
-        url="http://127.0.0.1:8000",
-        width=1280,
-        height=800,
-        min_size=(1024, 700),
-        maximized=True,
-        resizable=True,
-        background_color='#f8fafc',
-        text_select=False,
-        confirm_close=True  
-    )
-
-    webview.start(debug=False)
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

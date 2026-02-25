@@ -1,30 +1,21 @@
-import { useState, useEffect } from "react";
+/**
+ * Reports Page - ALMoheat Accounting System
+ * Professional UI with Modern Styling
+ */
+
+import React, { useState, useEffect } from 'react';
 import {
-  BarChart3,
-  TrendingUp,
-  TrendingDown,
-  Package,
-  Users,
-  FileText,
-  AlertTriangle,
-  PieChart as PieChartIcon,
-  ArrowRightLeft,
-  Calendar,
-  Filter,
-  X
-} from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { Button } from "../components/ui/button";
-import { Label } from "../components/ui/label";
-import { Badge } from "../components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "../components/ui/select";
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
 import {
   Table,
   TableBody,
@@ -32,738 +23,725 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "../components/ui/table";
-import { Input } from "../components/ui/input";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { reportsAPI, contactsAPI } from "../lib/api";
-import { formatCurrency, formatDate, formatNumber } from "../lib/utils";
-import { toast } from "sonner";
+} from "@/components/ui/table";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { 
+  FileText, 
+  Package, 
+  TrendingUp, 
+  User, 
+  Calendar,
+  ChevronDown,
+  ChevronUp,
+  Download,
+  Hash,
+  Weight,
+  Eye,
+  BarChart3,
+  Wallet
+} from 'lucide-react';
+import { 
+  getAccountStatement, 
+  getInventoryReport, 
+  getFinancialReport, 
+  getClients,
+  downloadBackup 
+} from '../lib/api';
+import { toast } from 'sonner';
 
-// ✅ Date range presets helper
-const getDateRange = (preset) => {
-  const today = new Date();
-  const formatDateStr = (date) => date.toISOString().split('T')[0];
+const Reports = () => {
+  const [clients, setClients] = useState([]);
+  const [loading, setLoading] = useState(false);
   
-  switch (preset) {
-    case 'today':
-      return { start: formatDateStr(today), end: formatDateStr(today) };
-    case 'week':
-      const weekAgo = new Date(today);
-      weekAgo.setDate(today.getDate() - 7);
-      return { start: formatDateStr(weekAgo), end: formatDateStr(today) };
-    case 'month':
-      const monthAgo = new Date(today);
-      monthAgo.setMonth(today.getMonth() - 1);
-      return { start: formatDateStr(monthAgo), end: formatDateStr(today) };
-    case 'year':
-      const yearAgo = new Date(today);
-      yearAgo.setFullYear(today.getFullYear() - 1);
-      return { start: formatDateStr(yearAgo), end: formatDateStr(today) };
-    default:
-      return { start: null, end: null };
-  }
-};
-
-export default function Reports() {
-  const [activeTab, setActiveTab] = useState("profit-loss");
-  const [loading, setLoading] = useState(true);
-  const [profitLossData, setProfitLossData] = useState(null);
-  const [inventoryData, setInventoryData] = useState(null);
-  const [contacts, setContacts] = useState([]);
-  const [selectedContact, setSelectedContact] = useState("");
+  // Account Statement State
+  const [selectedClient, setSelectedClient] = useState('');
+  const [statementStartDate, setStatementStartDate] = useState('');
+  const [statementEndDate, setStatementEndDate] = useState('');
   const [accountStatement, setAccountStatement] = useState(null);
+  const [expandedInvoices, setExpandedInvoices] = useState({});
+  
+  // Inventory Report State
+  const [inventoryStartDate, setInventoryStartDate] = useState('');
+  const [inventoryEndDate, setInventoryEndDate] = useState('');
+  const [inventoryReport, setInventoryReport] = useState(null);
+  
+  // Financial Report State
+  const [financialStartDate, setFinancialStartDate] = useState('');
+  const [financialEndDate, setFinancialEndDate] = useState('');
+  const [financialReport, setFinancialReport] = useState(null);
 
-  // ✅ Feature 2 & 3: Date filtering states
-  const [dateFilter, setDateFilter] = useState({
-    accountStatement: { start: null, end: null, preset: 'all' },
-    inventory: { start: null, end: null, preset: 'all' }
-  });
-
+  // Fetch clients on mount
   useEffect(() => {
-    fetchInitialData();
+    fetchClients();
   }, []);
 
-  useEffect(() => {
-    if (activeTab === "profit-loss") {
-      fetchProfitLoss();
-    } else if (activeTab === "inventory") {
-      fetchInventory();
-    }
-  }, [activeTab]);
-
-  // ✅ Fetch account statement when contact or date filter changes
-  useEffect(() => {
-    if (activeTab === "account-statement" && selectedContact) {
-      fetchAccountStatement();
-    }
-  }, [selectedContact, dateFilter.accountStatement.start, dateFilter.accountStatement.end]);
-
-  const fetchInitialData = async () => {
+  const fetchClients = async () => {
     try {
-      const [profitRes, inventoryRes, contactsRes] = await Promise.all([
-        reportsAPI.getProfitLoss(),
-        reportsAPI.getInventory(),
-        contactsAPI.getAll()
-      ]);
-      setProfitLossData(profitRes.data);
-      setInventoryData(inventoryRes.data);
-      setContacts(contactsRes.data);
+      const response = await getClients();
+      setClients(response.data);
     } catch (error) {
-      toast.error("فشل في تحميل التقارير");
+      toast.error('فشل في تحميل قائمة العملاء');
+      console.error(error);
+    }
+  };
+
+  // ==================== ACCOUNT STATEMENT ====================
+
+  const fetchAccountStatement = async () => {
+    if (!selectedClient) {
+      toast.error('الرجاء اختيار العميل');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const params = {};
+      if (statementStartDate && statementEndDate) {
+        params.start_date = new Date(statementStartDate).toISOString();
+        params.end_date = new Date(statementEndDate).toISOString();
+      }
+      
+      const response = await getAccountStatement(selectedClient, params);
+      setAccountStatement(response.data);
+    } catch (error) {
+      toast.error('فشل في تحميل كشف الحساب');
+      console.error(error);
     } finally {
       setLoading(false);
     }
   };
 
-  const fetchProfitLoss = async () => {
+  const toggleInvoiceExpand = (invoiceId) => {
+    setExpandedInvoices(prev => ({
+      ...prev,
+      [invoiceId]: !prev[invoiceId]
+    }));
+  };
+
+  // ==================== INVENTORY REPORT ====================
+
+  const fetchInventoryReport = async () => {
     try {
-      const response = await reportsAPI.getProfitLoss();
-      setProfitLossData(response.data);
+      setLoading(true);
+      const params = {};
+      if (inventoryStartDate && inventoryEndDate) {
+        params.start_date = new Date(inventoryStartDate).toISOString();
+        params.end_date = new Date(inventoryEndDate).toISOString();
+      }
+      
+      const response = await getInventoryReport(params);
+      setInventoryReport(response.data);
     } catch (error) {
+      toast.error('فشل في تحميل تقرير المخزون');
       console.error(error);
+    } finally {
+      setLoading(false);
     }
   };
 
-  // ✅ Feature 3: Fetch inventory with date filtering
-  const fetchInventory = async () => {
-    try {
-      const { start, end } = dateFilter.inventory;
-      const response = await reportsAPI.getInventory(start, end);
-      setInventoryData(response.data);
-    } catch (error) {
-      console.error(error);
-    }
-  };
+  // ==================== FINANCIAL REPORT ====================
 
-  // ✅ Feature 2: Fetch account statement with date filtering
-  const fetchAccountStatement = async () => {
-    if (!selectedContact) {
-      setAccountStatement(null);
+  const fetchFinancialReport = async () => {
+    if (!financialStartDate || !financialEndDate) {
+      toast.error('الرجاء تحديد نطاق التاريخ');
       return;
     }
+
     try {
-      const { start, end } = dateFilter.accountStatement;
-      const response = await reportsAPI.getAccountStatement(selectedContact, start, end);
-      setAccountStatement(response.data);
+      setLoading(true);
+      const params = {
+        start_date: new Date(financialStartDate).toISOString(),
+        end_date: new Date(financialEndDate).toISOString(),
+      };
+      
+      const response = await getFinancialReport(params);
+      setFinancialReport(response.data);
     } catch (error) {
-      toast.error("فشل في تحميل كشف الحساب");
+      toast.error('فشل في تحميل التقرير المالي');
+      console.error(error);
+    } finally {
+      setLoading(false);
     }
   };
 
-  // ✅ Handle date preset selection
-  const handleDatePreset = (tab, preset) => {
-    const { start, end } = getDateRange(preset);
-    setDateFilter(prev => ({
-      ...prev,
-      [tab]: { start, end, preset }
-    }));
-    
-    if (tab === 'inventory') {
-      // Trigger refetch for inventory
-      setTimeout(() => fetchInventory(), 0);
+  // ==================== BACKUP ====================
+
+  const handleDownloadBackup = async () => {
+    try {
+      setLoading(true);
+      const response = await downloadBackup();
+      
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `ALMoheat_Backup_${new Date().toISOString().split('T')[0]}.xlsx`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      
+      toast.success('تم تحميل النسخة الاحتياطية بنجاح');
+    } catch (error) {
+      toast.error('فشل في تحميل النسخة الاحتياطية');
+      console.error(error);
+    } finally {
+      setLoading(false);
     }
   };
 
-  // ✅ Handle custom date input
-  const handleCustomDate = (tab, field, value) => {
-    setDateFilter(prev => ({
-      ...prev,
-      [tab]: { ...prev[tab], [field]: value, preset: 'custom' }
-    }));
+  const formatNumber = (num) => {
+    if (num === undefined || num === null) return '-';
+    return parseFloat(num).toLocaleString('ar-SA', { maximumFractionDigits: 2 });
   };
 
-  // ✅ Clear date filter
-  const clearDateFilter = (tab) => {
-    setDateFilter(prev => ({
-      ...prev,
-      [tab]: { start: null, end: null, preset: 'all' }
-    }));
-    if (tab === 'inventory') {
-      setTimeout(() => fetchInventory(), 0);
-    }
+  const formatDate = (dateStr) => {
+    if (!dateStr) return '-';
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('ar-SA');
   };
-
-  const profitChartData = profitLossData ? [
-    { name: 'المبيعات', قيمة: profitLossData.sales_total || 0 },
-    { name: 'المشتريات', قيمة: profitLossData.purchases_total || 0 },
-    { name: 'الربح', قيمة: profitLossData.gross_profit || 0 },
-  ] : [];
-
-  if (loading) {
-    return (
-      <div className="flex h-[80vh] items-center justify-center">
-        <div className="h-16 w-16 rounded-full border-4 border-slate-200 border-t-slate-800 animate-spin"></div>
-      </div>
-    );
-  }
 
   return (
-    <div className="space-y-8 animate-fadeIn pb-10 font-sans">
-      
-      {/* Hero Section */}
-      <div className="relative overflow-hidden rounded-3xl bg-slate-900 p-8 text-white shadow-2xl ring-1 ring-white/10">
-        <div className="absolute top-0 left-0 h-full w-full bg-gradient-to-br from-slate-800 to-slate-900 opacity-50"></div>
-        <div className="absolute -right-20 -top-20 h-64 w-64 rounded-full bg-purple-600 blur-[100px] opacity-30"></div>
-        <div className="absolute -left-20 -bottom-20 h-64 w-64 rounded-full bg-fuchsia-600 blur-[100px] opacity-30"></div>
-        
-        <div className="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight mb-2">التقارير والتحليلات</h1>
-            <p className="text-slate-300 max-w-lg">
-              رؤى شاملة حول أداء عملك، الأرباح، المخزون، وكشوفات حسابات العملاء.
-            </p>
-          </div>
-          
-          <div className="flex items-center gap-3 bg-white/10 backdrop-blur-md p-3 rounded-2xl border border-white/10">
-            <div className="p-2 bg-purple-500/20 rounded-lg">
-              <Calendar className="h-6 w-6 text-purple-400" />
-            </div>
-            <div>
-              <p className="text-xs text-slate-300">السنة الحالية</p>
-              <p className="font-semibold text-white font-mono dir-ltr">
-                {new Date().getFullYear()}
-              </p>
-            </div>
-          </div>
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="section-header">
+        <div className="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center">
+          <BarChart3 className="h-5 w-5 text-indigo-600" />
+        </div>
+        <div>
+          <h1 className="text-xl font-bold text-slate-900">التقارير والإحصائيات</h1>
+          <p className="text-sm text-slate-500">كشوفات حسابات وتقارير مالية</p>
         </div>
       </div>
 
-      {/* Tabs */}
-      <Tabs value={activeTab} onValueChange={setActiveTab} dir="rtl" className="space-y-6">
-        
-        <Card className="border-none shadow-sm bg-white rounded-2xl overflow-hidden p-2">
-          <TabsList className="bg-slate-50 p-1 h-14 rounded-xl w-full grid grid-cols-3 gap-2">
-            <TabsTrigger 
-              value="profit-loss" 
-              className="rounded-lg h-12 data-[state=active]:bg-white data-[state=active]:text-emerald-700 data-[state=active]:shadow-sm font-medium text-slate-600 transition-all"
-            >
-              <TrendingUp className="h-5 w-5 ml-2" />
-              الربح والخسارة
-            </TabsTrigger>
-            <TabsTrigger 
-              value="account-statement" 
-              className="rounded-lg h-12 data-[state=active]:bg-white data-[state=active]:text-blue-700 data-[state=active]:shadow-sm font-medium text-slate-600 transition-all"
-            >
-              <FileText className="h-5 w-5 ml-2" />
-              كشف حساب
-            </TabsTrigger>
-            <TabsTrigger 
-              value="inventory" 
-              className="rounded-lg h-12 data-[state=active]:bg-white data-[state=active]:text-purple-700 data-[state=active]:shadow-sm font-medium text-slate-600 transition-all"
-            >
-              <Package className="h-5 w-5 ml-2" />
-              جرد المستودع
-            </TabsTrigger>
-          </TabsList>
-        </Card>
+      <Tabs defaultValue="statement" className="w-full">
+        <TabsList className="grid w-full grid-cols-4 bg-slate-100 p-1 rounded-xl">
+          <TabsTrigger value="statement" className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm data-[state=active]:text-indigo-600">
+            <User className="h-4 w-4 ml-2" />
+            كشف الحساب
+          </TabsTrigger>
+          <TabsTrigger value="inventory" className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm data-[state=active]:text-indigo-600">
+            <Package className="h-4 w-4 ml-2" />
+            المخزون
+          </TabsTrigger>
+          <TabsTrigger value="financial" className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm data-[state=active]:text-indigo-600">
+            <TrendingUp className="h-4 w-4 ml-2" />
+            المالي
+          </TabsTrigger>
+          <TabsTrigger value="backup" className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm data-[state=active]:text-indigo-600">
+            <Download className="h-4 w-4 ml-2" />
+            نسخة احتياطية
+          </TabsTrigger>
+        </TabsList>
 
-        {/* --- Tab 1: Profit & Loss --- */}
-        <TabsContent value="profit-loss" className="space-y-6 animate-fadeIn">
-          {profitLossData && (
-            <>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                
-                {/* Sales Card */}
-                <Card className="border-none shadow-sm hover:shadow-xl transition-all duration-300 hover:-translate-y-1 rounded-3xl bg-white overflow-hidden group cursor-default">
-                  <CardContent className="p-6">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-medium text-slate-500 mb-1">إجمالي المبيعات</p>
-                        <h3 className="text-2xl font-bold text-slate-900">{formatCurrency(profitLossData?.sales_total || 0)}</h3>
-                      </div>
-                      <div className="h-12 w-12 rounded-2xl bg-emerald-50 flex items-center justify-center text-emerald-600 group-hover:bg-emerald-500 group-hover:text-white transition-colors duration-300">
-                        <TrendingUp className="h-6 w-6" />
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                {/* Purchases Card */}
-                <Card className="border-none shadow-sm hover:shadow-xl transition-all duration-300 hover:-translate-y-1 rounded-3xl bg-white overflow-hidden group cursor-default">
-                  <CardContent className="p-6">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-medium text-slate-500 mb-1">إجمالي المشتريات</p>
-                        <h3 className="text-2xl font-bold text-slate-900">{formatCurrency(profitLossData?.purchases_total || 0)}</h3>
-                      </div>
-                      <div className="h-12 w-12 rounded-2xl bg-blue-50 flex items-center justify-center text-blue-600 group-hover:bg-blue-500 group-hover:text-white transition-colors duration-300">
-                        <TrendingDown className="h-6 w-6" />
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                {/* Net Profit Card */}
-                <Card className={`border-none shadow-sm hover:shadow-xl transition-all duration-300 hover:-translate-y-1 rounded-3xl overflow-hidden group cursor-default ${(profitLossData?.gross_profit || 0) >= 0 ? 'bg-emerald-50' : 'bg-red-50'}`}>
-                  <CardContent className="p-6">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className={`text-sm font-medium mb-1 ${(profitLossData?.gross_profit || 0) >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                          صافي الربح
-                        </p>
-                        <h3 className={`text-2xl font-bold ${(profitLossData?.gross_profit || 0) >= 0 ? 'text-emerald-800' : 'text-red-800'}`}>
-                          {formatCurrency(profitLossData?.gross_profit || 0)}
-                        </h3>
-                      </div>
-                      <div className={`h-12 w-12 rounded-2xl flex items-center justify-center transition-colors duration-300 ${
-                          (profitLossData?.gross_profit || 0) >= 0 
-                          ? 'bg-emerald-100 text-emerald-600 group-hover:bg-emerald-500 group-hover:text-white' 
-                          : 'bg-red-100 text-red-600 group-hover:bg-red-500 group-hover:text-white'
-                      }`}>
-                        <BarChart3 className="h-6 w-6" />
-                      </div>
-                    </div>
-                    <div className="mt-3 flex items-center gap-2">
-                        <Badge variant="outline" className={`bg-white/50 border-0 ${(profitLossData?.gross_profit || 0) >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                            هامش الربح: {(profitLossData?.profit_margin || 0).toFixed(1)}%
-                        </Badge>
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-
-              {/* Chart */}
-              <Card className="border-none shadow-sm bg-white rounded-3xl overflow-hidden">
-                <CardHeader className="border-b border-slate-100 bg-slate-50/50">
-                  <CardTitle className="text-lg font-bold text-slate-800">مقارنة الأداء المالي</CardTitle>
-                </CardHeader>
-                <CardContent className="p-6">
-                  <div className="h-[350px] w-full">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={profitChartData} layout="vertical" margin={{ top: 20, right: 30, left: 40, bottom: 5 }}>
-                        <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#E2E8F0" />
-                        <XAxis type="number" tickFormatter={(v) => formatCurrency(v)} axisLine={false} tickLine={false} />
-                        <YAxis type="category" dataKey="name" width={100} axisLine={false} tickLine={false} tick={{fill: '#64748B', fontSize: 14}} />
-                        <Tooltip 
-                            cursor={{fill: '#F1F5F9'}}
-                            contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                            formatter={(v) => formatCurrency(v)} 
-                        />
-                        <Bar dataKey="قيمة" fill="#8B5CF6" radius={[0, 8, 8, 0]} barSize={40} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                </CardContent>
-              </Card>
-            </>
-          )}
-        </TabsContent>
-
-        {/* --- Tab 2: Account Statement --- */}
-        <TabsContent value="account-statement" className="space-y-6 animate-fadeIn">
-          <Card className="border-none shadow-sm bg-white rounded-3xl">
-            <CardContent className="p-6">
-              <div className="max-w-2xl mx-auto space-y-4">
-                <Label className="text-slate-600 text-lg">اختر جهة الاتصال لعرض الكشف</Label>
-                <Select value={selectedContact} onValueChange={setSelectedContact}>
-                  <SelectTrigger className="h-14 rounded-xl bg-slate-50 border-slate-200 text-lg" data-testid="account-contact-select">
-                    <SelectValue placeholder="اختر عميل أو مورد..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {contacts.map(contact => (
-                      <SelectItem key={contact.id} value={contact.id}>
-                        {contact.name} ({contact.contact_type === 'customer' ? 'عميل' : 'مورد'})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
-                {/* ✅ Feature 2: Date Filtering UI */}
-                {selectedContact && (
-                  <div className="mt-4 p-4 bg-slate-50 rounded-xl border border-slate-100">
-                    <div className="flex items-center gap-2 mb-3">
-                      <Filter className="h-4 w-4 text-slate-500" />
-                      <span className="text-sm font-medium text-slate-700">تصفية حسب التاريخ</span>
-                    </div>
-                    
-                    {/* Date Presets */}
-                    <div className="flex flex-wrap gap-2 mb-3">
-                      {[
-                        { value: 'all', label: 'الكل' },
-                        { value: 'today', label: 'اليوم' },
-                        { value: 'week', label: 'آخر أسبوع' },
-                        { value: 'month', label: 'آخر شهر' },
-                        { value: 'year', label: 'آخر سنة' },
-                      ].map(preset => (
-                        <Button
-                          key={preset.value}
-                          type="button"
-                          variant={dateFilter.accountStatement.preset === preset.value ? "default" : "outline"}
-                          size="sm"
-                          onClick={() => handleDatePreset('accountStatement', preset.value)}
-                          className="h-8 text-xs"
-                        >
-                          {preset.label}
-                        </Button>
+        {/* ==================== ACCOUNT STATEMENT TAB ==================== */}
+        <TabsContent value="statement" className="mt-6">
+          <div className="pro-card">
+            <div className="pro-card-header">
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <FileText className="h-5 w-5 text-indigo-600" />
+                كشف حساب العميل
+              </CardTitle>
+            </div>
+            <CardContent className="p-6 space-y-6">
+              {/* Filters */}
+              <div className="grid grid-cols-4 gap-4">
+                <div className="space-y-2">
+                  <Label className="pro-label">العميل</Label>
+                  <Select value={selectedClient} onValueChange={setSelectedClient}>
+                    <SelectTrigger className="pro-input">
+                      <SelectValue placeholder="اختر العميل" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {clients.map(client => (
+                        <SelectItem key={client._id} value={client._id}>
+                          {client.name}
+                        </SelectItem>
                       ))}
-                    </div>
-
-                    {/* Custom Date Range */}
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <Label className="text-xs text-slate-500 mb-1 block">من تاريخ</Label>
-                        <Input
-                          type="date"
-                          value={dateFilter.accountStatement.start || ''}
-                          onChange={(e) => handleCustomDate('accountStatement', 'start', e.target.value)}
-                          className="h-10 text-sm"
-                        />
-                      </div>
-                      <div>
-                        <Label className="text-xs text-slate-500 mb-1 block">إلى تاريخ</Label>
-                        <Input
-                          type="date"
-                          value={dateFilter.accountStatement.end || ''}
-                          onChange={(e) => handleCustomDate('accountStatement', 'end', e.target.value)}
-                          className="h-10 text-sm"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Clear Filter */}
-                    {(dateFilter.accountStatement.start || dateFilter.accountStatement.end) && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => clearDateFilter('accountStatement')}
-                        className="mt-2 text-slate-500 hover:text-red-600"
-                      >
-                        <X className="h-3 w-3 ml-1" />
-                        إزالة التصفية
-                      </Button>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label className="pro-label">من تاريخ</Label>
+                  <Input
+                    type="date"
+                    value={statementStartDate}
+                    onChange={(e) => setStatementStartDate(e.target.value)}
+                    className="pro-input"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="pro-label">إلى تاريخ</Label>
+                  <Input
+                    type="date"
+                    value={statementEndDate}
+                    onChange={(e) => setStatementEndDate(e.target.value)}
+                    className="pro-input"
+                  />
+                </div>
+                <div className="flex items-end">
+                  <button
+                    onClick={fetchAccountStatement}
+                    disabled={loading}
+                    className="pro-btn-primary w-full"
+                  >
+                    {loading ? (
+                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    ) : (
+                      <Eye className="h-4 w-4" />
                     )}
-                  </div>
-                )}
+                    عرض الكشف
+                  </button>
+                </div>
               </div>
-            </CardContent>
-          </Card>
 
-          {accountStatement && (
-            <>
-              {/* Contact Header */}
-              <div className="bg-slate-900 text-white rounded-3xl p-6 shadow-lg flex items-center justify-between relative overflow-hidden transition-all duration-300 hover:scale-[1.01]">
-                 <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full -mr-16 -mt-16 blur-3xl"></div>
-                 <div className="relative z-10 flex items-center gap-4">
-                    <div className="h-16 w-16 bg-white/10 rounded-2xl flex items-center justify-center backdrop-blur-sm">
-                        <Users className="h-8 w-8 text-white" />
+              {/* Client Info */}
+              {accountStatement?.client && (
+                <div className="bg-indigo-50 rounded-xl p-4 border border-indigo-100">
+                  <div className="grid grid-cols-3 gap-4">
+                    <div>
+                      <span className="text-sm text-slate-500">اسم العميل:</span>
+                      <span className="font-bold text-slate-900 mr-2">{accountStatement.client.name}</span>
                     </div>
                     <div>
-                        <h2 className="text-2xl font-bold">{accountStatement.contact.name}</h2>
-                        <Badge variant="outline" className="mt-1 text-slate-300 border-slate-700">
-                            {accountStatement.contact.contact_type === 'customer' ? 'عميل' : 'مورد'}
-                        </Badge>
+                      <span className="text-sm text-slate-500">رقم الهاتف:</span>
+                      <span className="font-bold text-slate-900 mr-2">{accountStatement.client.phone || '-'}</span>
                     </div>
-                 </div>
-                 <div className="relative z-10 text-left">
-                    <p className="text-slate-400 text-sm mb-1">الرصيد الحالي</p>
-                    <p className={`text-3xl font-bold dir-ltr ${accountStatement.current_balance >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                        {formatCurrency(Math.abs(accountStatement.current_balance))}
-                        <span className="text-sm text-slate-400 font-normal ml-2">
-                            {accountStatement.current_balance >= 0 ? '(له)' : '(عليه)'}
-                        </span>
-                    </p>
-                 </div>
-              </div>
-
-              {/* Date Filter Info */}
-              {(accountStatement.filter?.start_date || accountStatement.filter?.end_date) && (
-                <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 flex items-center gap-2">
-                  <Calendar className="h-4 w-4 text-blue-600" />
-                  <span className="text-sm text-blue-800">
-                    عرض البيانات من {accountStatement.filter.start_date || 'البداية'} إلى {accountStatement.filter.end_date || 'الآن'}
-                  </span>
+                    <div>
+                      <span className="text-sm text-slate-500">الرصيد الحالي:</span>
+                      <span className={`font-bold mr-2 ${accountStatement.client.balance >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                        {formatNumber(accountStatement.client.balance)}
+                      </span>
+                    </div>
+                  </div>
                 </div>
               )}
 
-              {/* Tables */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* Invoices Table */}
-                  <Card className="border-none shadow-sm bg-white rounded-3xl overflow-hidden">
-                    <CardHeader className="bg-slate-50/50 border-b border-slate-100">
-                      <CardTitle className="flex items-center gap-2">
-                          <FileText className="h-5 w-5 text-slate-500" />
-                          سجل الفواتير
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="p-0">
-                      {accountStatement.invoices.length > 0 ? (
-                        <div className="max-h-[400px] overflow-y-auto">
-                            <Table>
-                            <TableHeader className="bg-slate-50 sticky top-0">
-                                <TableRow>
-                                <TableHead className="text-right py-4">النوع</TableHead>
-                                <TableHead className="text-right py-4">الإجمالي</TableHead>
-                                <TableHead className="text-right py-4">التاريخ</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {accountStatement.invoices.map((inv) => (
-                                <TableRow key={inv.id} className="hover:bg-slate-50/50">
-                                    <TableCell>
-                                    <Badge variant="secondary" className={inv.invoice_type === 'sale' ? 'bg-emerald-50 text-emerald-700' : 'bg-blue-50 text-blue-700'}>
-                                        {inv.invoice_type === 'sale' ? 'بيع' : 'شراء'}
-                                    </Badge>
-                                    </TableCell>
-                                    <TableCell className="font-semibold text-slate-900">{formatCurrency(inv.total)}</TableCell>
-                                    <TableCell className="text-slate-500 text-sm dir-ltr text-right">{formatDate(inv.created_at)}</TableCell>
-                                </TableRow>
-                                ))}
-                            </TableBody>
-                            </Table>
-                        </div>
+              {/* Invoices Table with Expandable Items */}
+              {accountStatement?.invoices && (
+                <div className="border border-slate-200 rounded-2xl overflow-hidden">
+                  <table className="pro-table">
+                    <thead>
+                      <tr className="bg-slate-50">
+                        <th className="w-10"></th>
+                        <th>رقم الفاتورة</th>
+                        <th>التاريخ</th>
+                        <th>عدد المنتجات</th>
+                        <th>الخصم</th>
+                        <th>الإجمالي</th>
+                        <th>الإجراءات</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {accountStatement.invoices.length === 0 ? (
+                        <tr>
+                          <td colSpan={7} className="text-center py-8 text-slate-500">
+                            لا توجد فواتير للفترة المحددة
+                          </td>
+                        </tr>
                       ) : (
-                        <div className="p-12 text-center text-slate-400">
-                          لا توجد فواتير مسجلة في هذا النطاق الزمني
-                        </div>
+                        accountStatement.invoices.map((invoice) => (
+                          <React.Fragment key={invoice._id}>
+                            <tr className="hover:bg-slate-50">
+                              <td>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => toggleInvoiceExpand(invoice._id)}
+                                  className="hover:bg-indigo-50 hover:text-indigo-600"
+                                >
+                                  {expandedInvoices[invoice._id] ? (
+                                    <ChevronUp className="h-4 w-4" />
+                                  ) : (
+                                    <ChevronDown className="h-4 w-4" />
+                                  )}
+                                </Button>
+                              </td>
+                              <td className="font-semibold">{invoice.invoice_number}</td>
+                              <td>{formatDate(invoice.date)}</td>
+                              <td>
+                                <span className="pro-badge-slate">
+                                  {invoice.items?.length || 0} منتج
+                                </span>
+                              </td>
+                              <td>{formatNumber(invoice.discount)}</td>
+                              <td className="font-bold text-emerald-600">
+                                {formatNumber(invoice.total)}
+                              </td>
+                              <td>
+                                <button
+                                  onClick={() => toggleInvoiceExpand(invoice._id)}
+                                  className="text-indigo-600 hover:text-indigo-700 text-sm font-medium"
+                                >
+                                  {expandedInvoices[invoice._id] ? 'إخفاء' : 'عرض المنتجات'}
+                                </button>
+                              </td>
+                            </tr>
+
+                            {expandedInvoices[invoice._id] && (
+                              <tr className="bg-indigo-50/30">
+                                <td colSpan={7} className="p-0">
+                                  <div className="p-4">
+                                    <h4 className="font-semibold mb-3 text-sm text-slate-700">
+                                      تفاصيل المنتجات في الفاتورة:
+                                    </h4>
+                                    <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                                      <table className="pro-table">
+                                        <thead>
+                                          <tr className="bg-slate-50">
+                                            <th>اسم المنتج</th>
+                                            <th>وحدة البيع</th>
+                                            <th>الكمية</th>
+                                            <th>سعر الوحدة</th>
+                                            <th>الإجمالي</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {invoice.items?.map((item, idx) => (
+                                            <tr key={idx}>
+                                              <td className="font-medium">{item.product_name}</td>
+                                              <td>
+                                                {item.sale_unit === 'count' ? (
+                                                  <span className="pro-badge-slate">
+                                                    <Hash className="h-3 w-3" />
+                                                    عدد
+                                                  </span>
+                                                ) : (
+                                                  <span className="pro-badge-indigo">
+                                                    <Weight className="h-3 w-3" />
+                                                    وزن
+                                                  </span>
+                                                )}
+                                              </td>
+                                              <td>
+                                                {formatNumber(item.quantity)}
+                                                {item.sale_unit === 'weight' && ' كغ'}
+                                              </td>
+                                              <td>{formatNumber(item.unit_price)}</td>
+                                              <td className="font-semibold text-emerald-600">
+                                                {formatNumber(item.total)}
+                                              </td>
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
+                        ))
                       )}
-                    </CardContent>
-                  </Card>
-
-                  {/* Cash Transactions Table */}
-                  <Card className="border-none shadow-sm bg-white rounded-3xl overflow-hidden">
-                    <CardHeader className="bg-slate-50/50 border-b border-slate-100">
-                      <CardTitle className="flex items-center gap-2">
-                          <ArrowRightLeft className="h-5 w-5 text-slate-500" />
-                          المعاملات النقدية
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="p-0">
-                      {accountStatement.transactions.length > 0 ? (
-                        <div className="max-h-[400px] overflow-y-auto">
-                            <Table>
-                            <TableHeader className="bg-slate-50 sticky top-0">
-                                <TableRow>
-                                <TableHead className="text-right py-4">النوع</TableHead>
-                                <TableHead className="text-right py-4">المبلغ</TableHead>
-                                <TableHead className="text-right py-4">التاريخ</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {accountStatement.transactions.map((trans) => (
-                                <TableRow key={trans.id} className="hover:bg-slate-50/50">
-                                    <TableCell>
-                                    <Badge variant="secondary" className={trans.transaction_type === 'receipt' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}>
-                                        {trans.transaction_type === 'receipt' ? 'قبض' : trans.transaction_type === 'expense' ? 'مصروف' : 'دفع'}
-                                    </Badge>
-                                    </TableCell>
-                                    <TableCell className={`font-bold ${trans.transaction_type === 'receipt' ? 'text-emerald-600' : 'text-red-600'}`}>
-                                    {formatCurrency(trans.amount)}
-                                    </TableCell>
-                                    <TableCell className="text-slate-500 text-sm dir-ltr text-right">{formatDate(trans.created_at)}</TableCell>
-                                </TableRow>
-                                ))}
-                            </TableBody>
-                            </Table>
-                        </div>
-                      ) : (
-                        <div className="p-12 text-center text-slate-400">
-                          لا توجد معاملات نقدية مسجلة في هذا النطاق الزمني
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-              </div>
-            </>
-          )}
-
-          {!selectedContact && (
-            <div className="flex flex-col items-center justify-center py-12 text-slate-400">
-              <Users className="h-16 w-16 mb-4 opacity-20" />
-              <p>يرجى اختيار جهة اتصال من القائمة أعلاه لعرض التفاصيل</p>
-            </div>
-          )}
-        </TabsContent>
-
-        {/* --- Tab 3: Inventory Report --- */}
-        <TabsContent value="inventory" className="space-y-6 animate-fadeIn">
-          {/* ✅ Feature 3: Date Filtering UI for Inventory */}
-          <Card className="border-none shadow-sm bg-white rounded-3xl">
-            <CardContent className="p-6">
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                <div className="flex items-center gap-2">
-                  <Filter className="h-5 w-5 text-slate-500" />
-                  <span className="font-medium text-slate-700">تصفية حسب تاريخ الإضافة</span>
+                    </tbody>
+                  </table>
                 </div>
-                
-                {/* Date Presets */}
-                <div className="flex flex-wrap gap-2">
-                  {[
-                    { value: 'all', label: 'الكل' },
-                    { value: 'today', label: 'اليوم' },
-                    { value: 'week', label: 'آخر أسبوع' },
-                    { value: 'month', label: 'آخر شهر' },
-                    { value: 'year', label: 'آخر سنة' },
-                  ].map(preset => (
-                    <Button
-                      key={preset.value}
-                      type="button"
-                      variant={dateFilter.inventory.preset === preset.value ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => handleDatePreset('inventory', preset.value)}
-                      className="h-9 text-xs"
-                    >
-                      {preset.label}
-                    </Button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Custom Date Range */}
-              <div className="grid grid-cols-2 gap-3 mt-4 max-w-md">
-                <div>
-                  <Label className="text-xs text-slate-500 mb-1 block">من تاريخ</Label>
-                  <Input
-                    type="date"
-                    value={dateFilter.inventory.start || ''}
-                    onChange={(e) => handleCustomDate('inventory', 'start', e.target.value)}
-                    className="h-10 text-sm"
-                  />
-                </div>
-                <div>
-                  <Label className="text-xs text-slate-500 mb-1 block">إلى تاريخ</Label>
-                  <Input
-                    type="date"
-                    value={dateFilter.inventory.end || ''}
-                    onChange={(e) => handleCustomDate('inventory', 'end', e.target.value)}
-                    className="h-10 text-sm"
-                  />
-                </div>
-              </div>
-
-              {/* Clear Filter */}
-              {(dateFilter.inventory.start || dateFilter.inventory.end) && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => clearDateFilter('inventory')}
-                  className="mt-3 text-slate-500 hover:text-red-600"
-                >
-                  <X className="h-3 w-3 ml-1" />
-                  إزالة التصفية
-                </Button>
               )}
             </CardContent>
-          </Card>
+          </div>
+        </TabsContent>
 
-          {inventoryData && (
-            <>
-              {/* Date Filter Info */}
-              {(inventoryData.filter?.start_date || inventoryData.filter?.end_date) && (
-                <div className="bg-purple-50 border border-purple-100 rounded-xl p-3 flex items-center gap-2">
-                  <Calendar className="h-4 w-4 text-purple-600" />
-                  <span className="text-sm text-purple-800">
-                    عرض المنتجات المضافة من {inventoryData.filter.start_date || 'البداية'} إلى {inventoryData.filter.end_date || 'الآن'}
-                  </span>
+        {/* ==================== INVENTORY REPORT TAB ==================== */}
+        <TabsContent value="inventory" className="mt-6">
+          <div className="pro-card">
+            <div className="pro-card-header">
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <Package className="h-5 w-5 text-indigo-600" />
+                تقرير المخزون
+              </CardTitle>
+            </div>
+            <CardContent className="p-6 space-y-6">
+              {/* Filters */}
+              <div className="grid grid-cols-4 gap-4">
+                <div className="space-y-2">
+                  <Label className="pro-label">من تاريخ (إنشاء/تعديل)</Label>
+                  <Input
+                    type="date"
+                    value={inventoryStartDate}
+                    onChange={(e) => setInventoryStartDate(e.target.value)}
+                    className="pro-input"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="pro-label">إلى تاريخ</Label>
+                  <Input
+                    type="date"
+                    value={inventoryEndDate}
+                    onChange={(e) => setInventoryEndDate(e.target.value)}
+                    className="pro-input"
+                  />
+                </div>
+                <div className="flex items-end gap-2">
+                  <button
+                    onClick={fetchInventoryReport}
+                    disabled={loading}
+                    className="pro-btn-primary flex-1"
+                  >
+                    {loading ? (
+                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    ) : (
+                      <Eye className="h-4 w-4" />
+                    )}
+                    عرض
+                  </button>
+                  <button
+                    onClick={() => {
+                      setInventoryStartDate('');
+                      setInventoryEndDate('');
+                      fetchInventoryReport();
+                    }}
+                    className="pro-btn-secondary"
+                  >
+                    الكل
+                  </button>
+                </div>
+              </div>
+
+              {/* Summary */}
+              {inventoryReport?.summary && (
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="bg-blue-50 rounded-xl p-4 text-center border border-blue-100">
+                    <div className="text-sm text-slate-600 mb-1">إجمالي المنتجات</div>
+                    <div className="text-2xl font-bold text-blue-600">
+                      {inventoryReport.summary.total_products}
+                    </div>
+                  </div>
+                  <div className="bg-emerald-50 rounded-xl p-4 text-center border border-emerald-100">
+                    <div className="text-sm text-slate-600 mb-1">القيمة (تكلفة)</div>
+                    <div className="text-2xl font-bold text-emerald-600">
+                      {formatNumber(inventoryReport.summary.total_value_cost)}
+                    </div>
+                  </div>
+                  <div className="bg-purple-50 rounded-xl p-4 text-center border border-purple-100">
+                    <div className="text-sm text-slate-600 mb-1">القيمة (بيع)</div>
+                    <div className="text-2xl font-bold text-purple-600">
+                      {formatNumber(inventoryReport.summary.total_value_price)}
+                    </div>
+                  </div>
                 </div>
               )}
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                
-                {/* Total Items */}
-                <Card className="border-none shadow-sm hover:shadow-xl transition-all duration-300 hover:-translate-y-1 rounded-3xl bg-white overflow-hidden group cursor-default">
-                  <CardContent className="p-6">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-medium text-slate-500 mb-1">عدد المنتجات</p>
-                        <h3 className="text-2xl font-bold text-slate-900">{formatNumber(inventoryData?.total_items || 0)}</h3>
-                      </div>
-                      <div className="h-12 w-12 rounded-2xl bg-blue-50 flex items-center justify-center text-blue-600 group-hover:bg-blue-500 group-hover:text-white transition-colors duration-300">
-                        <Package className="h-6 w-6" />
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
+              {/* Products Table */}
+              {inventoryReport?.products && (
+                <div className="border border-slate-200 rounded-2xl overflow-hidden">
+                  <table className="pro-table">
+                    <thead>
+                      <tr className="bg-slate-50">
+                        <th>اسم المنتج</th>
+                        <th>نوع الوحدة</th>
+                        <th>سعر التكلفة</th>
+                        <th>سعر البيع</th>
+                        <th>الكمية (عدد)</th>
+                        <th>الكمية (وزن)</th>
+                        <th>القيمة</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {inventoryReport.products.length === 0 ? (
+                        <tr>
+                          <td colSpan={7} className="text-center py-8 text-slate-500">
+                            لا توجد منتجات للفترة المحددة
+                          </td>
+                        </tr>
+                      ) : (
+                        inventoryReport.products.map((product) => (
+                          <tr key={product._id}>
+                            <td className="font-semibold">{product.name}</td>
+                            <td>
+                              {product.unit_type === 'dual' ? (
+                                <span className="pro-badge-indigo">
+                                  ثنائية ({product.weight_per_unit} كغ)
+                                </span>
+                              ) : (
+                                <span className="pro-badge-slate">بسيطة</span>
+                              )}
+                            </td>
+                            <td>{formatNumber(product.cost)}</td>
+                            <td>{formatNumber(product.price)}</td>
+                            <td>{formatNumber(product.stock_count)}</td>
+                            <td>
+                              {product.unit_type === 'dual' ? (
+                                <span className="text-indigo-600 font-medium">
+                                  {formatNumber(product.stock_weight)} كغ
+                                </span>
+                              ) : (
+                                <span className="text-slate-400">-</span>
+                              )}
+                            </td>
+                            <td className="font-semibold text-emerald-600">
+                              {formatNumber((product.stock_count || 0) * (product.price || 0))}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </div>
+        </TabsContent>
 
-                {/* Stock Value */}
-                <Card className="border-none shadow-sm hover:shadow-xl transition-all duration-300 hover:-translate-y-1 rounded-3xl bg-white overflow-hidden group cursor-default">
-                  <CardContent className="p-6">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-medium text-slate-500 mb-1">قيمة المخزون (شراء)</p>
-                        <h3 className="text-2xl font-bold text-emerald-600">{formatCurrency(inventoryData?.total_value || 0)}</h3>
-                      </div>
-                      <div className="h-12 w-12 rounded-2xl bg-emerald-50 flex items-center justify-center text-emerald-600 group-hover:bg-emerald-500 group-hover:text-white transition-colors duration-300">
-                        <BarChart3 className="h-6 w-6" />
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                {/* Low Stock */}
-                <Card className={`border-none shadow-sm hover:shadow-xl transition-all duration-300 hover:-translate-y-1 rounded-3xl overflow-hidden group cursor-default ${(inventoryData?.low_stock_count || 0) > 0 ? 'bg-amber-50' : 'bg-slate-50'}`}>
-                  <CardContent className="p-6">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className={`text-sm font-medium mb-1 ${(inventoryData?.low_stock_count || 0) > 0 ? 'text-amber-700' : 'text-slate-600'}`}>
-                          منتجات منخفضة
-                        </p>
-                        <h3 className={`text-2xl font-bold ${(inventoryData?.low_stock_count || 0) > 0 ? 'text-amber-800' : 'text-slate-800'}`}>
-                          {inventoryData?.low_stock_count || 0}
-                        </h3>
-                      </div>
-                      <div className={`h-12 w-12 rounded-2xl flex items-center justify-center transition-colors duration-300 ${(inventoryData?.low_stock_count || 0) > 0 ? 'bg-amber-100 text-amber-600 group-hover:bg-amber-500 group-hover:text-white' : 'bg-slate-200 text-slate-600 group-hover:bg-slate-500 group-hover:text-white'}`}>
-                        <AlertTriangle className="h-6 w-6" />
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
+        {/* ==================== FINANCIAL REPORT TAB ==================== */}
+        <TabsContent value="financial" className="mt-6">
+          <div className="pro-card">
+            <div className="pro-card-header">
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <TrendingUp className="h-5 w-5 text-indigo-600" />
+                التقرير المالي
+              </CardTitle>
+            </div>
+            <CardContent className="p-6 space-y-6">
+              {/* Filters */}
+              <div className="grid grid-cols-4 gap-4">
+                <div className="space-y-2">
+                  <Label className="pro-label">من تاريخ <span className="text-rose-500">*</span></Label>
+                  <Input
+                    type="date"
+                    value={financialStartDate}
+                    onChange={(e) => setFinancialStartDate(e.target.value)}
+                    className="pro-input"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="pro-label">إلى تاريخ <span className="text-rose-500">*</span></Label>
+                  <Input
+                    type="date"
+                    value={financialEndDate}
+                    onChange={(e) => setFinancialEndDate(e.target.value)}
+                    className="pro-input"
+                  />
+                </div>
+                <div className="flex items-end">
+                  <button
+                    onClick={fetchFinancialReport}
+                    disabled={loading}
+                    className="pro-btn-primary w-full"
+                  >
+                    {loading ? (
+                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    ) : (
+                      <Eye className="h-4 w-4" />
+                    )}
+                    عرض التقرير
+                  </button>
+                </div>
               </div>
 
-              {/* Products Table */}
-              <Card className="border-none shadow-sm bg-white rounded-3xl overflow-hidden">
-                <CardHeader className="bg-slate-50/50 border-b border-slate-100">
-                  <CardTitle className="text-lg font-bold text-slate-800">تفاصيل المخزون</CardTitle>
-                </CardHeader>
-                <CardContent className="p-0">
-                  {inventoryData?.products?.length > 0 ? (
-                    <Table>
-                      <TableHeader className="bg-slate-50">
-                        <TableRow>
-                          <TableHead className="text-right py-4 px-6">المنتج</TableHead>
-                          <TableHead className="text-right py-4">الكمية</TableHead>
-                          <TableHead className="text-right py-4">الحد الأدنى</TableHead>
-                          <TableHead className="text-right py-4">سعر الشراء</TableHead>
-                          <TableHead className="text-right py-4">قيمة المخزون</TableHead>
-                          <TableHead className="text-right py-4">الحالة</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {inventoryData.products.map((product) => (
-                          <TableRow key={product.id} className="hover:bg-slate-50/50 transition-colors">
-                            <TableCell className="font-medium px-6 py-4">{product.name}</TableCell>
-                            {/* ✅ Feature 1: Display with 2 decimal places */}
-                            <TableCell className="font-bold">{parseFloat(product.quantity).toFixed(2)}</TableCell>
-                            <TableCell className="text-slate-500">{parseFloat(product.min_quantity).toFixed(2)}</TableCell>
-                            <TableCell>{formatCurrency(product.purchase_price)}</TableCell>
-                            <TableCell className="font-semibold text-slate-900">{formatCurrency(product.stock_value)}</TableCell>
-                            <TableCell>
-                              {parseFloat(product.quantity) <= parseFloat(product.min_quantity) ? (
-                                <Badge variant="destructive" className="bg-amber-100 text-amber-700 hover:bg-amber-200 border-0">
-                                  منخفض
-                                </Badge>
-                              ) : (
-                                <Badge variant="secondary" className="bg-emerald-100 text-emerald-700 hover:bg-emerald-200 border-0">
-                                  متوفر
-                                </Badge>
-                              )}
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  ) : (
-                    <div className="p-12 text-center text-slate-400">
-                      لا توجد منتجات في المخزون ضمن نطاق التاريخ المحدد
+              {/* Financial Summary */}
+              {financialReport && (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="bg-emerald-50 rounded-xl p-4 text-center border border-emerald-100">
+                    <div className="text-sm text-slate-600 mb-1">إجمالي المبيعات</div>
+                    <div className="text-2xl font-bold text-emerald-600">
+                      {formatNumber(financialReport.total_sales)}
                     </div>
+                  </div>
+                  <div className="bg-rose-50 rounded-xl p-4 text-center border border-rose-100">
+                    <div className="text-sm text-slate-600 mb-1">إجمالي المصروفات</div>
+                    <div className="text-2xl font-bold text-rose-600">
+                      {formatNumber(financialReport.total_expenses)}
+                    </div>
+                  </div>
+                  <div className="bg-blue-50 rounded-xl p-4 text-center border border-blue-100">
+                    <div className="text-sm text-slate-600 mb-1">إجمالي الإيرادات</div>
+                    <div className="text-2xl font-bold text-blue-600">
+                      {formatNumber(financialReport.total_income)}
+                    </div>
+                  </div>
+                  <div className={`rounded-xl p-4 text-center border ${financialReport.net_profit >= 0 ? 'bg-emerald-100 border-emerald-200' : 'bg-rose-100 border-rose-200'}`}>
+                    <div className="text-sm text-slate-600 mb-1">صافي الربح</div>
+                    <div className={`text-2xl font-bold ${financialReport.net_profit >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                      {formatNumber(financialReport.net_profit)}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Additional Stats */}
+              {financialReport && (
+                <div className="bg-slate-50 rounded-xl p-4 border border-slate-200">
+                  <div className="grid grid-cols-2 gap-4 text-center">
+                    <div>
+                      <span className="text-slate-500">عدد الفواتير:</span>
+                      <span className="font-bold text-slate-900 mr-2">{financialReport.invoices_count}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500">عدد المعاملات:</span>
+                      <span className="font-bold text-slate-900 mr-2">{financialReport.expenses_count}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </div>
+        </TabsContent>
+
+        {/* ==================== BACKUP TAB ==================== */}
+        <TabsContent value="backup" className="mt-6">
+          <div className="pro-card">
+            <div className="pro-card-header">
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <Download className="h-5 w-5 text-indigo-600" />
+                نسخة احتياطية Excel
+              </CardTitle>
+            </div>
+            <CardContent className="p-6 space-y-6">
+              <div className="bg-indigo-50 rounded-2xl p-6 border border-indigo-100">
+                <h3 className="font-bold text-lg text-slate-900 mb-4">تصدير البيانات إلى Excel</h3>
+                <p className="text-slate-600 mb-6">
+                  سيتم تصدير جميع بيانات النظام إلى ملف Excel يحتوي على 4 أوراق:
+                </p>
+                
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                  <div className="bg-white rounded-xl p-4 text-center shadow-sm border border-slate-100">
+                    <Package className="h-8 w-8 mx-auto mb-2 text-indigo-500" />
+                    <div className="font-semibold text-slate-900">المنتجات</div>
+                    <div className="text-xs text-slate-500">الكميات والأسعار</div>
+                  </div>
+                  <div className="bg-white rounded-xl p-4 text-center shadow-sm border border-slate-100">
+                    <User className="h-8 w-8 mx-auto mb-2 text-emerald-500" />
+                    <div className="font-semibold text-slate-900">العملاء</div>
+                    <div className="text-xs text-slate-500">الأرصدة والبيانات</div>
+                  </div>
+                  <div className="bg-white rounded-xl p-4 text-center shadow-sm border border-slate-100">
+                    <FileText className="h-8 w-8 mx-auto mb-2 text-purple-500" />
+                    <div className="font-semibold text-slate-900">الفواتير</div>
+                    <div className="text-xs text-slate-500">تفصيلي</div>
+                  </div>
+                  <div className="bg-white rounded-xl p-4 text-center shadow-sm border border-slate-100">
+                    <Wallet className="h-8 w-8 mx-auto mb-2 text-orange-500" />
+                    <div className="font-semibold text-slate-900">المصروفات</div>
+                    <div className="text-xs text-slate-500">والنقدية</div>
+                  </div>
+                </div>
+
+                <button
+                  onClick={handleDownloadBackup}
+                  disabled={loading}
+                  className="pro-btn-primary"
+                >
+                  {loading ? (
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  ) : (
+                    <Download className="h-5 w-5" />
                   )}
-                </CardContent>
-              </Card>
-            </>
-          )}
+                  تحميل النسخة الاحتياطية
+                </button>
+              </div>
+            </CardContent>
+          </div>
         </TabsContent>
       </Tabs>
     </div>
   );
-}
+};
+
+export default Reports;

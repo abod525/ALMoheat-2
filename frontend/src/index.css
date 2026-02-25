@@ -1,107 +1,244 @@
-/* 1. استيراد خط تجوال (Tajawal) بأوزان متعددة */
-@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@200;300;400;500;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700;800&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-:root {
-    direction: rtl;
-}
-
-/* 2. تطبيق الخط والألوان الأساسية */
-body {
-    margin: 0;
-    font-family: 'Tajawal', sans-serif; /* الخط الجديد */
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    direction: rtl;
-    @apply bg-slate-50 text-slate-900; /* خلفية فاتحة ولون خط كحلي */
-}
-
-code {
-    font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
-}
-
-/* المتغيرات الأساسية (حافظنا عليها لضمان عمل shadcn/ui) */
 @layer base {
-    :root {
-        --background: 210 40% 98%;
-        --foreground: 222 47% 11%;
-        --card: 0 0% 100%;
-        --card-foreground: 222 47% 11%;
-        --popover: 0 0% 100%;
-        --popover-foreground: 222 47% 11%;
-        --primary: 222 47% 11%;
-        --primary-foreground: 210 40% 98%;
-        --secondary: 210 40% 96%;
-        --secondary-foreground: 222 47% 11%;
-        --muted: 210 40% 96%;
-        --muted-foreground: 215 16% 47%;
-        --accent: 217 91% 60%;
-        --accent-foreground: 0 0% 100%;
-        --destructive: 0 84% 60%;
-        --destructive-foreground: 0 0% 98%;
-        --border: 214 32% 91%;
-        --input: 214 32% 91%;
-        --ring: 222 47% 11%;
-        --radius: 0.75rem; /* زوايا أكثر انحناءً */
-    }
+  :root {
+    --background: 210 40% 98%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    --primary: 243 75% 59%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222 47% 11%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+    --accent: 210 40% 96%;
+    --accent-foreground: 222 47% 11%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 243 75% 59%;
+    --radius: 1rem;
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 222 47% 11%;
+    --sidebar-primary: 243 75% 59%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 210 40% 96%;
+    --sidebar-accent-foreground: 222 47% 11%;
+    --sidebar-border: 214 32% 91%;
+    --sidebar-ring: 243 75% 59%;
+  }
 }
 
 @layer base {
-    * {
-        @apply border-border;
-    }
+  * {
+    @apply border-border;
+  }
+  
+  html {
+    font-family: 'Cairo', sans-serif;
+  }
+  
+  body {
+    @apply bg-slate-50 text-slate-900 antialiased;
+    font-family: 'Cairo', sans-serif;
+  }
 }
 
-/* 3. سكرول بار أنيق ومستدير */
+@layer components {
+  /* Professional Card Styles */
+  .pro-card {
+    @apply bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden;
+  }
+  
+  .pro-card-header {
+    @apply px-6 py-5 border-b border-slate-100 bg-white;
+  }
+  
+  .pro-card-body {
+    @apply p-6;
+  }
+  
+  /* Professional Input Styles */
+  .pro-input {
+    @apply h-12 px-4 rounded-xl border border-slate-200 bg-white text-slate-900
+           placeholder:text-slate-400 transition-all duration-200
+           focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 focus:outline-none
+           hover:border-slate-300;
+  }
+  
+  .pro-input-error {
+    @apply border-rose-500 focus:border-rose-500 focus:ring-rose-500/20;
+  }
+  
+  /* Professional Button Styles */
+  .pro-btn {
+    @apply h-12 px-6 rounded-xl font-semibold transition-all duration-200
+           flex items-center justify-center gap-2
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  
+  .pro-btn-primary {
+    @apply pro-btn bg-indigo-600 text-white hover:bg-indigo-700 
+           active:bg-indigo-800 shadow-sm hover:shadow-md;
+  }
+  
+  .pro-btn-secondary {
+    @apply pro-btn bg-white text-slate-700 border border-slate-200 
+           hover:bg-slate-50 hover:border-slate-300;
+  }
+  
+  .pro-btn-danger {
+    @apply pro-btn bg-rose-600 text-white hover:bg-rose-700;
+  }
+  
+  .pro-btn-success {
+    @apply pro-btn bg-emerald-600 text-white hover:bg-emerald-700;
+  }
+  
+  /* Professional Table Styles */
+  .pro-table {
+    @apply w-full border-collapse;
+  }
+  
+  .pro-table th {
+    @apply px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider
+           bg-slate-50 border-b border-slate-200;
+  }
+  
+  .pro-table td {
+    @apply px-4 py-4 text-sm text-slate-700 border-b border-slate-100;
+  }
+  
+  .pro-table tr:nth-child(even) {
+    @apply bg-slate-50/50;
+  }
+  
+  .pro-table tr:hover {
+    @apply bg-slate-100/50 transition-colors;
+  }
+  
+  /* Professional Badge Styles */
+  .pro-badge {
+    @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium;
+  }
+  
+  .pro-badge-indigo {
+    @apply pro-badge bg-indigo-100 text-indigo-700;
+  }
+  
+  .pro-badge-emerald {
+    @apply pro-badge bg-emerald-100 text-emerald-700;
+  }
+  
+  .pro-badge-rose {
+    @apply pro-badge bg-rose-100 text-rose-700;
+  }
+  
+  .pro-badge-amber {
+    @apply pro-badge bg-amber-100 text-amber-700;
+  }
+  
+  .pro-badge-slate {
+    @apply pro-badge bg-slate-100 text-slate-700;
+  }
+  
+  /* Professional Toggle Styles */
+  .pro-toggle-group {
+    @apply inline-flex bg-slate-100 p-1 rounded-xl;
+  }
+  
+  .pro-toggle-item {
+    @apply px-4 py-2 rounded-lg text-sm font-medium text-slate-600 transition-all
+           hover:text-slate-900 focus:outline-none;
+  }
+  
+  .pro-toggle-item[data-state="on"] {
+    @apply bg-white text-indigo-600 shadow-sm;
+  }
+  
+  /* Stat Card Styles */
+  .stat-card {
+    @apply bg-white rounded-2xl p-6 border border-slate-100 shadow-sm
+           transition-all duration-200 hover:shadow-md hover:border-indigo-100;
+  }
+  
+  .stat-card-icon {
+    @apply w-12 h-12 rounded-xl flex items-center justify-center;
+  }
+  
+  /* Dialog Styles */
+  .pro-dialog-overlay {
+    @apply fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50;
+  }
+  
+  .pro-dialog-content {
+    @apply fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 
+           bg-white rounded-2xl shadow-2xl z-50 w-full max-w-lg max-h-[90vh] overflow-y-auto;
+  }
+  
+  /* Form Label Styles */
+  .pro-label {
+    @apply block text-sm font-medium text-slate-700 mb-1.5;
+  }
+  
+  /* Section Header */
+  .section-header {
+    @apply text-xl font-bold text-slate-900 flex items-center gap-3;
+  }
+  
+  /* Sidebar Styles */
+  .sidebar-nav-item {
+    @apply flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium
+           transition-all duration-200;
+  }
+  
+  .sidebar-nav-item-active {
+    @apply sidebar-nav-item bg-indigo-600 text-white shadow-md shadow-indigo-500/25;
+  }
+  
+  .sidebar-nav-item-inactive {
+    @apply sidebar-nav-item text-slate-600 hover:bg-slate-100 hover:text-slate-900;
+  }
+}
+
+/* Custom Scrollbar */
 ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-    background: transparent;
+  @apply bg-slate-100 rounded-full;
 }
 
 ::-webkit-scrollbar-thumb {
-    @apply bg-slate-300 rounded-full;
+  @apply bg-slate-300 rounded-full;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    @apply bg-slate-400;
+  @apply bg-slate-400;
 }
 
-/* 4. كلاس تأثير الزجاج (Glassmorphism) */
-.glass-panel {
-    @apply bg-white/80 backdrop-blur-md border border-white/20 shadow-sm;
-}
-
-/* RTL Helpers */
-.rtl-flip {
-    transform: scaleX(-1);
-}
-
-/* تنسيق الأرقام لتظهر بشكل جميل */
-.num-ar {
-    font-variant-numeric: tabular-nums;
-    font-family: 'Tajawal', sans-serif;
-    direction: ltr;
-    display: inline-block;
-}
-
-/* Animations */
-.animate-fadeIn {
-    animation: fadeIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-}
-
+/* Animation for page transitions */
 @keyframes fadeIn {
-    from { opacity: 0; transform: translateY(20px); }
-    to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
-@media print {
-    .no-print { display: none !important; }
-    body { font-size: 12pt; }
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out;
 }
