@@ -61,4 +61,22 @@ export const downloadBackup = () => {
   });
 };
 
+// ==================== UNIFIED API OBJECTS ====================
+
+export const clientsAPI = {
+  getAll: getClients,
+  getOne: getClient,
+  create: createClient,
+  update: updateClient,
+  delete: deleteClient,
+};
+
+export const cashAPI = {
+  getAll: (type) => api.get('/cash', { params: { transaction_type: type } }),
+  getBalance: () => api.get('/cash/balance'),
+  create: (data) => api.post('/cash', data),
+  update: (id, data) => api.put(`/cash/${id}`, data),
+  delete: (id) => api.delete(`/cash/${id}`),
+};
+
 export default api;

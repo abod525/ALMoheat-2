@@ -43,7 +43,7 @@ import {
   TableHeader,
   TableRow,
 } from "../components/ui/table";
-import { cashAPI, contactsAPI } from "../lib/api";
+import { cashAPI, clientsAPI } from "../lib/api";
 import { formatCurrency, formatDateTime } from "../lib/utils";
 import { toast } from "sonner";
 
@@ -56,7 +56,7 @@ const initialFormData = {
 
 export default function Cash() {
   const [transactions, setTransactions] = useState([]);
-  const [contacts, setContacts] = useState([]);
+  const [clients, setClients] = useState([]);
   const [balance, setBalance] = useState({ receipts: 0, payments: 0, balance: 0 });
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -76,7 +76,7 @@ export default function Cash() {
   useEffect(() => {
     fetchTransactions();
     fetchBalance();
-    fetchContacts();
+    fetchClients();
   }, [activeTab]);
 
   const fetchTransactions = async () => {
@@ -100,10 +100,10 @@ export default function Cash() {
     }
   };
 
-  const fetchContacts = async () => {
+  const fetchClients = async () => {
     try {
-      const response = await contactsAPI.getAll();
-      setContacts(response.data);
+      const response = await clientsAPI.getAll();
+      setClients(response.data);
     } catch (error) {
       console.error(error);
     }
@@ -178,7 +178,7 @@ export default function Cash() {
 
   const filteredTransactions = transactions.filter((trans) =>
     trans.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (trans.contact_name && trans.contact_name.toLowerCase().includes(searchTerm.toLowerCase()))
+    (trans.client_name && trans.client_name.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
   return (
@@ -477,9 +477,9 @@ export default function Cash() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">بدون جهة اتصال</SelectItem>
-                  {contacts.map(contact => (
-                    <SelectItem key={contact.id} value={contact.id}>
-                      {contact.name} ({contact.contact_type === 'customer' ? 'عميل' : 'مورد'})
+                  {clients.map(client => (
+                    <SelectItem key={client._id} value={client._id}>
+                      {client.name}
                     </SelectItem>
                   ))}
                 </SelectContent>
