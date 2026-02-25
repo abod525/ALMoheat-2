@@ -4,6 +4,7 @@
  */
 
 import React, { useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Package,
   Users,
@@ -20,16 +21,18 @@ import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { Toaster } from 'sonner';
 
-const Layout = ({ children, currentPage, onNavigate }) => {
+const Layout = ({ children }) => {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const navigation = [
-    { name: 'الرئيسية', page: 'dashboard', icon: Home },
-    { name: 'المنتجات', page: 'products', icon: Package },
-    { name: 'العملاء', page: 'clients', icon: Users },
-    { name: 'الفواتير', page: 'invoices', icon: FileText },
-    { name: 'المصروفات', page: 'expenses', icon: Wallet },
-    { name: 'التقارير', page: 'reports', icon: BarChart3 },
+    { name: 'الرئيسية', path: '/', icon: Home },
+    { name: 'المنتجات', path: '/products', icon: Package },
+    { name: 'العملاء', path: '/clients', icon: Users },
+    { name: 'الفواتير', path: '/invoices', icon: FileText },
+    { name: 'المصروفات', path: '/expenses', icon: Wallet },
+    { name: 'التقارير', path: '/reports', icon: BarChart3 },
   ];
 
   const NavContent = () => (
@@ -51,13 +54,13 @@ const Layout = ({ children, currentPage, onNavigate }) => {
       <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
         {navigation.map((item) => {
           const Icon = item.icon;
-          const isActive = currentPage === item.page;
+          const isActive = location.pathname === item.path;
           
           return (
             <button
-              key={item.page}
+              key={item.path}
               onClick={() => {
-                onNavigate(item.page);
+                navigate(item.path);
                 setMobileMenuOpen(false);
               }}
               className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 text-right ${
@@ -104,9 +107,7 @@ const Layout = ({ children, currentPage, onNavigate }) => {
 
         {/* Main Content */}
         <main className="flex-1 mr-72 min-h-screen p-6">
-          <div className="animate-fade-in">
-            {children}
-          </div>
+          {children}
         </main>
       </div>
 
@@ -135,9 +136,7 @@ const Layout = ({ children, currentPage, onNavigate }) => {
 
         {/* Mobile Main Content */}
         <main className="min-h-screen p-4">
-          <div className="animate-fade-in">
-            {children}
-          </div>
+          {children}
         </main>
       </div>
     </div>

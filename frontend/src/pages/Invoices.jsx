@@ -208,31 +208,35 @@ const Invoices = () => {
       return;
     }
 
-    let quantity, displayQuantity;
-    
+    let quantity = 0;
+    let weight = 0;
+    let count = 0;
+
     if (product.unit_type === 'dual') {
       if (currentItem.sale_unit === 'count') {
-        quantity = parseFloat(currentItem.quantity);
-        if (!quantity || quantity <= 0) {
-          toast.error('الرجاء إدخال كمية صحيحة');
+        count = parseFloat(currentItem.quantity);
+        if (isNaN(count) || count <= 0) {
+          toast.error('الرجاء إدخال كمية صحيحة بالعدد');
           return;
         }
-        displayQuantity = quantity;
-      } else {
-        quantity = parseFloat(currentItem.weight);
-        if (!quantity || quantity <= 0) {
+        weight = count * product.weight_per_unit;
+        quantity = count; // quantity represents the primary unit for calculation
+      } else { // sale_unit === 'weight'
+        weight = parseFloat(currentItem.weight);
+        if (isNaN(weight) || weight <= 0) {
           toast.error('الرجاء إدخال وزن صحيح');
           return;
         }
-        displayQuantity = quantity;
+        count = weight / product.weight_per_unit;
+        quantity = weight; // quantity represents the primary unit for calculation
       }
-    } else {
-      quantity = parseFloat(currentItem.quantity);
-      if (!quantity || quantity <= 0) {
+    } else { // simple unit
+      count = parseFloat(currentItem.quantity);
+      if (isNaN(count) || count <= 0) {
         toast.error('الرجاء إدخال كمية صحيحة');
         return;
       }
-      displayQuantity = quantity;
+      quantity = count;
     }
 
     const unitPrice = parseFloat(currentItem.unit_price);
@@ -246,11 +250,12 @@ const Invoices = () => {
     const newItem = {
       product_id: currentItem.product_id,
       product_name: currentItem.product_name,
-      quantity: quantity,
-      unit_price: unitPrice,
-      total: total,
-      sale_unit: product.unit_type === 'dual' ? currentItem.sale_unit : 'count',
-      weight_per_unit: product.weight_per_unit,
+        quantity: count, // Always store count for simple products, or count equivalent for dual
+        unit_price: unitPrice,
+        total: total,
+        sale_unit: product.unit_type === 'dual' ? currentItem.sale_unit : 'count',
+        weight_per_unit: product.weight_per_unit,
+        ...(product.unit_type === 'dual' && { weight: weight }), // Conditionally add weight for dual units
     };
 
     setInvoiceData(prev => ({

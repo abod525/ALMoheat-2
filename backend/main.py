@@ -4,6 +4,8 @@ FastAPI + MongoDB with Strict Dual-Unit System
 """
 
 from fastapi import FastAPI, HTTPException, Query
+from dotenv import load_dotenv
+import os
 from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
@@ -18,6 +20,9 @@ from fastapi.responses import StreamingResponse
 # Initialize FastAPI app
 app = FastAPI(title="ALMoheat Accounting System", version="2.0.0")
 
+# Load environment variables
+load_dotenv()
+
 # CORS Middleware
 app.add_middleware(
     CORSMiddleware,
@@ -28,7 +33,7 @@ app.add_middleware(
 )
 
 # MongoDB Connection
-MONGO_URL = "mongodb://localhost:27017"
+MONGO_URL = os.getenv("MONGO_URL", "mongodb://localhost:27017")
 client = AsyncIOMotorClient(MONGO_URL)
 db = client.almoheat_db
 
@@ -64,9 +69,10 @@ class ProductBase(BaseModel):
             if self.weight_per_unit is None or self.weight_per_unit <= 0:
                 raise ValueError('weight_per_unit is required and must be > 0 when unit_type is "dual"')
             # Ensure stock_weight is synchronized
-            expected_weight = self.stock_count * self.weight_per_unit
-            if abs(self.stock_weight - expected_weight) > 0.001:  # Small tolerance for float
-                self.stock_weight = expected_weight
+            # Ensure stock_weight is synchronized if stock_count or weight_per_unit is updated
+            # This validator runs on initialization and updates, so we ensure consistency
+            if self.stock_count is not None and self.weight_per_unit is not None:
+                self.stock_weight = self.stock_count * self.weight_per_unit
         return self
 
 class ProductCreate(ProductBase):
@@ -86,9 +92,11 @@ class Product(ProductBase):
     created_at: datetime
     updated_at: datetime
     
-    class Config:
-        populate_by_name = True
-        json_encoders = {ObjectId: str}
+    model_config = {
+        "populate_by_name": True,
+        "arbitrary_types_allowed": True,
+        "json_encoders": {ObjectId: str}
+    }
 
 # ==================== INVOICE ITEM MODELS ====================
 
@@ -125,9 +133,11 @@ class Invoice(InvoiceBase):
     id: str = Field(alias="_id")
     created_at: datetime
     
-    class Config:
-        populate_by_name = True
-        json_encoders = {ObjectId: str}
+    model_config = {
+        "populate_by_name": True,
+        "arbitrary_types_allowed": True,
+        "json_encoders": {ObjectId: str}
+    }
 
 # ==================== CLIENT MODELS ====================
 
@@ -149,9 +159,11 @@ class Client(ClientBase):
     created_at: datetime
     last_transaction_date: Optional[datetime] = None
     
-    class Config:
-        populate_by_name = True
-        json_encoders = {ObjectId: str}
+    model_config = {
+        "populate_by_name": True,
+        "arbitrary_types_allowed": True,
+        "json_encoders": {ObjectId: str}
+    }
 
 # ==================== EXPENSE/CASH MODELS ====================
 
@@ -168,9 +180,11 @@ class Expense(ExpenseBase):
     id: str = Field(alias="_id")
     created_at: datetime
     
-    class Config:
-        populate_by_name = True
-        json_encoders = {ObjectId: str}
+    model_config = {
+        "populate_by_name": True,
+        "arbitrary_types_allowed": True,
+        "json_encoders": {ObjectId: str}
+    }
 
 # ==================== HELPER FUNCTIONS ====================
 
@@ -229,15 +243,32 @@ async def update_product(product_id: str, product: ProductUpdate):
     if not existing:
         raise HTTPException(status_code=404, detail="المنتج غير موجود")
     
-    update_data = {k: v for k, v in product.model_dump().items() if v is not None}
+    update_data = {k: v for k, v in product.model_dump(exclude_unset=True).items() if v is not None}
     update_data["updated_at"] = datetime.now()
     
-    # For dual unit products, maintain stock_weight consistency
-    if existing.get("unit_type") == UnitType.DUAL or update_data.get("unit_type") == UnitType.DUAL:
-        weight_per_unit = update_data.get("weight_per_unit", existing.get("weight_per_unit"))
-        stock_count = update_data.get("stock_count", existing.get("stock_count", 0))
-        if weight_per_unit:
-            update_data["stock_weight"] = stock_count * weight_per_unit
+    # Determine the effective unit_type after update
+    effective_unit_type = update_data.get("unit_type", existing.get("unit_type"))
+
+    if effective_unit_type == UnitType.DUAL:
+        # Get current/updated weight_per_unit and stock_count
+        current_weight_per_unit = update_data.get("weight_per_unit", existing.get("weight_per_unit"))
+        current_stock_count = update_data.get("stock_count", existing.get("stock_count", 0))
+
+        # Validate weight_per_unit for DUAL type
+        if current_weight_per_unit is None or current_weight_per_unit <= 0:
+            raise HTTPException(status_code=400, detail="weight_per_unit مطلوب ويجب أن يكون أكبر من 0 عندما يكون نوع الوحدة 'ثنائي'")
+        
+        # Recalculate stock_weight
+        update_data["stock_weight"] = current_stock_count * current_weight_per_unit
+
+    elif effective_unit_type == UnitType.SIMPLE and existing.get("unit_type") == UnitType.DUAL:
+        # If changing from DUAL to SIMPLE, reset weight_per_unit and stock_weight
+        update_data["weight_per_unit"] = None
+        update_data["stock_weight"] = 0.0
+    elif effective_unit_type == UnitType.SIMPLE:
+        # If it's a SIMPLE product, ensure weight_per_unit and stock_weight are consistent
+        update_data["weight_per_unit"] = None
+        update_data["stock_weight"] = 0.0
     
     await db.products.update_one(
         {"_id": ObjectId(product_id)},
@@ -304,9 +335,8 @@ async def create_invoice(invoice: InvoiceCreate):
                     available = product.get("stock_count", 0)
                     raise HTTPException(
                         status_code=400, 
-                        detail=f"الكمية غير متوفرة! المتاح: {available} كيس"
+                        detail=f"الكمية المطلوبة ({item.quantity}) تتجاوز المخزون المتاح ({available}) للمنتج {item.product_name}"
                     )
-                
                 # Deduct from stock_count and stock_weight
                 deduct_count = item.quantity
                 deduct_weight = item.quantity * weight_per_unit
@@ -355,10 +385,9 @@ async def create_invoice(invoice: InvoiceCreate):
             if product.get("stock_count", 0) < item.quantity:
                 available = product.get("stock_count", 0)
                 raise HTTPException(
-                    status_code=400,
-                    detail=f"الكمية غير متوفرة! المتاح: {available}"
+                    status_code=400, 
+                    detail=f"الكمية المطلوبة ({item.quantity}) تتجاوز المخزون المتاح ({available}) للمنتج {item.product_name}"
                 )
-            
             new_stock_count = product.get("stock_count", 0) - item.quantity
             await db.products.update_one(
                 {"_id": ObjectId(item.product_id)},
@@ -570,12 +599,8 @@ async def get_inventory_report(
     total_value_price = 0
     
     for p in products:
-        if p.get("unit_type") == UnitType.DUAL:
-            total_value_cost += p.get("stock_count", 0) * p.get("cost", 0)
-            total_value_price += p.get("stock_count", 0) * p.get("price", 0)
-        else:
-            total_value_cost += p.get("stock_count", 0) * p.get("cost", 0)
-            total_value_price += p.get("stock_count", 0) * p.get("price", 0)
+        total_value_cost += p.get("stock_count", 0) * p.get("cost", 0)
+        total_value_price += p.get("stock_count", 0) * p.get("price", 0)
     
     return {
         "products": serialize_docs(products),

@@ -19,7 +19,10 @@ import {
 import { getProducts, getClients, getInvoices, getExpenses } from '../lib/api';
 import { toast } from 'sonner';
 
-const Dashboard = ({ onNavigate }) => {
+import { useNavigate } from 'react-router-dom';
+
+const Dashboard = () => {
+  const navigate = useNavigate();
   const [stats, setStats] = useState({
     totalProducts: 0,
     totalClients: 0,
@@ -140,7 +143,7 @@ const Dashboard = ({ onNavigate }) => {
           icon={Users}
           color="text-emerald-600"
           bgColor="bg-emerald-100"
-          onClick={() => onNavigate('clients')}
+          onClick={() => navigate("/clients")}
           subtitle="اضغط للإدارة"
         />
         <StatCard
@@ -230,8 +233,7 @@ const Dashboard = ({ onNavigate }) => {
               </div>
             )}
             <button
-              onClick={() => onNavigate('products')}
-              className="w-full mt-4 text-indigo-600 hover:text-indigo-700 font-medium text-sm flex items-center justify-center gap-1"
+              onClick={() => navigate("/products")}              className="w-full mt-4 text-indigo-600 hover:text-indigo-700 font-medium text-sm flex items-center justify-center gap-1"
             >
               عرض كل المنتجات
               <ArrowLeft className="h-4 w-4" />
@@ -248,8 +250,7 @@ const Dashboard = ({ onNavigate }) => {
         <div className="p-6">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <button
-              onClick={() => onNavigate('invoices')}
-              className="h-24 flex flex-col items-center justify-center gap-3 rounded-xl border border-slate-200 bg-white hover:border-indigo-300 hover:bg-indigo-50 transition-all"
+              onClick={() => navigate("/invoices")}              className="h-24 flex flex-col items-center justify-center gap-3 rounded-xl border border-slate-200 bg-white hover:border-indigo-300 hover:bg-indigo-50 transition-all"
             >
               <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center">
                 <ShoppingCart className="h-5 w-5 text-indigo-600" />
@@ -257,7 +258,7 @@ const Dashboard = ({ onNavigate }) => {
               <span className="font-medium text-slate-700">فاتورة جديدة</span>
             </button>
             <button
-              onClick={() => onNavigate('products')}
+              onClick={() => navigate("/products")}
               className="h-24 flex flex-col items-center justify-center gap-3 rounded-xl border border-slate-200 bg-white hover:border-emerald-300 hover:bg-emerald-50 transition-all"
             >
               <div className="w-10 h-10 bg-emerald-100 rounded-lg flex items-center justify-center">
@@ -266,7 +267,7 @@ const Dashboard = ({ onNavigate }) => {
               <span className="font-medium text-slate-700">إضافة منتج</span>
             </button>
             <button
-              onClick={() => onNavigate('clients')}
+              onClick={() => navigate("/clients")}
               className="h-24 flex flex-col items-center justify-center gap-3 rounded-xl border border-slate-200 bg-white hover:border-blue-300 hover:bg-blue-50 transition-all"
             >
               <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
@@ -275,7 +276,7 @@ const Dashboard = ({ onNavigate }) => {
               <span className="font-medium text-slate-700">إضافة عميل</span>
             </button>
             <button
-              onClick={() => onNavigate('reports')}
+              onClick={() => navigate("/reports")}
               className="h-24 flex flex-col items-center justify-center gap-3 rounded-xl border border-slate-200 bg-white hover:border-purple-300 hover:bg-purple-50 transition-all"
             >
               <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
