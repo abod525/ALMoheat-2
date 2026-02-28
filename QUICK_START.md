@@ -1,4 +1,5 @@
 # دليل البدء السريع
+
 ## Quick Start Guide for ALMoheat-2
 
 هذا الدليل يساعدك على البدء بسرعة مع تطبيق ALMoheat-2 بعد تطبيق جميع التوصيات.
@@ -16,7 +17,7 @@ cp .env.example .env
 
 ### 2️⃣ توليد SECRET_KEY
 
-```bash
+```csharp
 python3 -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
@@ -73,7 +74,7 @@ npm start
 ## 📋 الملفات المهمة
 
 | الملف | الوصف | الموقع |
-|:---:|:---|:---:|
+| --- | --- | --- |
 | `IMPLEMENTATION_GUIDE.md` | دليل شامل لتطبيق جميع التوصيات | الجذر |
 | `MONGODB_REPLICA_SET_SETUP.md` | دليل تفصيلي لإعداد MongoDB | الجذر |
 | `PRODUCTION_DEPLOYMENT_GUIDE.md` | دليل النشر في الإنتاج | الجذر |
@@ -101,7 +102,7 @@ curl http://localhost:8000/api/products
 
 ```bash
 mongosh "mongodb://admin:password@localhost:27017/almoheat_db?authSource=admin&replicaSet=rs0"
-rs.status()
+rs.status(  )
 ```
 
 يجب أن ترى `"ismaster": true`.
@@ -113,23 +114,28 @@ rs.status()
 ### قبل الإنتاج:
 
 1. **غير كلمة مرور MongoDB**
+
    ```
    MONGO_URL=mongodb://new-username:new-password@...
    ```
 
-2. **غير SECRET_KEY**
+1. **غير SECRET_KEY**
+
    ```bash
    python3 -c "import secrets; print(secrets.token_urlsafe(32))"
    ```
 
-3. **حدث CORS_ORIGINS**
+1. **حدث CORS_ORIGINS**
+
    ```
    CORS_ORIGINS=https://your-domain.com
    ```
 
-4. **استخدم HTTPS**
-   - احصل على SSL Certificate من Let's Encrypt
-   - اتبع `PRODUCTION_DEPLOYMENT_GUIDE.md`
+1. **استخدم HTTPS**
+
+- احصل على SSL Certificate من Let's Encrypt
+
+- اتبع `PRODUCTION_DEPLOYMENT_GUIDE.md`
 
 ---
 
@@ -148,19 +154,23 @@ docker restart mongodb
 ### "CORS error"
 
 - تحقق من أن `CORS_ORIGINS` في `.env` يحتوي على `http://localhost:3000`
+
 - أعد تشغيل Backend
 
 ### "not a replica set"
 
 - تأكد من أن MongoDB يعمل مع `--replSet rs0`
-- تحقق من أن `rs.initiate()` تم تنفيذه
+
+- تحقق من أن `rs.initiate( )` تم تنفيذه
 
 ---
 
 ## 📚 المزيد من المعلومات
 
 - اقرأ `IMPLEMENTATION_GUIDE.md` للخطوات التفصيلية
+
 - اقرأ `PRODUCTION_DEPLOYMENT_GUIDE.md` قبل النشر
+
 - اقرأ `COMPREHENSIVE_TEST_REPORT.md` لفهم الاختبارات
 
 ---
@@ -168,12 +178,16 @@ docker restart mongodb
 ## 🎯 الخطوات التالية
 
 1. ✅ تشغيل التطبيق محلياً
-2. ✅ اختبار جميع الميزات
-3. ✅ إعداد MongoDB Replica Set
-4. ✅ إعداد HTTPS و SSL
-5. ✅ النشر في الإنتاج
+
+1. ✅ اختبار جميع الميزات
+
+1. ✅ إعداد MongoDB Replica Set
+
+1. ✅ إعداد HTTPS و SSL
+
+1. ✅ النشر في الإنتاج
 
 ---
 
-**تم إعداد هذا الدليل:** 25 فبراير 2026  
-**الإصدار:** 1.0
+**تم إعداد هذا الدليل:** 25 فبراير 2026**الإصدار:** 1.0
+
